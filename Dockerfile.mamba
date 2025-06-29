@@ -1,0 +1,56 @@
+FROM mambaorg/micromamba:1.5.8
+
+USER root
+
+# Install system dependencies including git for submodules
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    python3-dev \
+    libpython3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER $MAMBA_USER
+
+# Create environment with Python 3.7 as specified in README
+RUN micromamba create -n live -c conda-forge python=3.7 -y && \
+    micromamba clean --all --yes
+
+# Activate environment by default
+ARG MAMBA_DOCKERFILE_ACTIVATE=1
+
+# Install conda packages exactly as specified in README
+# Install pytorch and torchvision using pip for Python 3.7 compatibility
+RUN micromamba install -n live -c conda-forge numpy scikit-image -y && \
+    micromamba install -n live -c conda-forge "cmake>=3.15" -y && \
+    micromamba install -n live -c conda-forge ffmpeg -y
+
+# Install pip packages exactly as specified in README
+RUN micromamba run -n live pip install \
+    torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+    micromamba run -n live pip install \
+    svgwrite svgpathtools cssutils numba torch-tools scikit-fmm easydict visdom \
+    "opencv-python==4.5.4.60"
+
+# ---------- build pydiffvg --------------------------------------------------
+
+WORKDIR /workspace
+
+# Copy project files (including .git for submodule handling)
+COPY --chown=$MAMBA_USER:$MAMBA_USER . /workspace
+
+# Initialize git submodules and build DiffVG exactly as README specifies
+RUN cd /workspace && \
+    git config --global --add safe.directory /workspace && \
+    cd DiffVG && \
+    git submodule update --init --recursive && \
+    find . -name "CMakeLists.txt" -exec sed -i 's/cmake_minimum_required([^)]*)/cmake_minimum_required(VERSION 3.5)/g' {} + && \
+    micromamba run -n live python setup.py install
+
+WORKDIR /workspace
+
+ENV CUDA_VISIBLE_DEVICES=0
+
+# Set the default command to run the training
+CMD ["micromamba", "run", "-n", "live", "python", "main_coarse.py", "--data_path=/data"]
