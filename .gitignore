@@ -281,3 +281,6 @@ BUILD/
 *.bak
 *.backup
 *.orig
+
+# Specstory
+.specstory/
