@@ -6,16 +6,13 @@ services:
     image: supersvg:latest
     container_name: supersvg-training
     volumes:
-      # Mount your dataset directory (update the path below to your actual dataset location)
-      # - /path/to/your/dataset:/data
+      # Mount your dataset directory (REQUIRED - update the path below)
+      - ${DATA_PATH:-.}/input:/data
       
       # Mount output directories to persist training results
       - ./output_coarse:/workspace/output_coarse
       - ./logs:/workspace/logs
       - ./checkpoints:/workspace/checkpoints
-      
-      # Optional: mount the entire project for development
-      # - .:/workspace
     
     environment:
       # Set CUDA device (set to empty string for CPU-only)
@@ -24,12 +21,10 @@ services:
       # Optional: set additional environment variables
       - PYTHONPATH=/workspace
     
-    # Default command - can be overridden
-    command: ["micromamba", "run", "-n", "live", "python", "main_coarse.py", "--data_path=/data"]
-    
-    # Uncomment for interactive mode
-    # stdin_open: true
-    # tty: true
+    # Interactive mode by default - override with docker-compose run
+    stdin_open: true
+    tty: true
+    entrypoint: ["/bin/bash"]
     
     # Uncomment for GPU support (requires nvidia-docker)
     # deploy:
@@ -39,21 +34,3 @@ services:
     #         - driver: nvidia
     #           count: 1
     #           capabilities: [gpu]
-
-  # Optional: development service for interactive work
-  supersvg-dev:
-    build:
-      context: .
-      dockerfile: Dockerfile.mamba
-    image: supersvg:latest
-    container_name: supersvg-dev
-    volumes:
-      - /path/to/your/dataset:/data
-      - .:/workspace
-    environment:
-      - CUDA_VISIBLE_DEVICES=0
-    entrypoint: ["bash"]
-    stdin_open: true
-    tty: true
-    profiles:
-      - dev  # Only start when explicitly requested
