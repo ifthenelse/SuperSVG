@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   supersvg:
     build:
@@ -8,8 +6,8 @@ services:
     image: supersvg:latest
     container_name: supersvg-training
     volumes:
-      # Mount your dataset directory (update the path on the left side)
-      - /path/to/your/dataset:/data
+      # Mount your dataset directory (update the path below to your actual dataset location)
+      # - /path/to/your/dataset:/data
       
       # Mount output directories to persist training results
       - ./output_coarse:/workspace/output_coarse
