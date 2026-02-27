@@ -7,8 +7,19 @@ This guide provides the fastest path to running SuperSVG with Docker, with paral
 ### Prerequisites
 
 - Docker Desktop installed and running
+- Python 3.7+ installed on host machine (for dataset downloads)
 - 50GB+ free disk space for large datasets (test dataset is 5 MB)
 - 16GB+ RAM allocated to Docker
+
+### Initial Setup (First Time Only)
+
+**Setup Python environment for dataset processing:**
+
+```bash
+./setup_dataset_env.sh
+```
+
+This creates `.venv-datasets/` with numpy and pillow. Only needs to run once.
 
 ### Automated Dataset Download
 

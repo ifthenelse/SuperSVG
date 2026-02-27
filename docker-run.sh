@@ -33,6 +33,40 @@ print_warning() {
     echo -e "${YELLOW}⚠ $1${NC}"
 }
 
+print_info() {
+    echo -e "${BLUE}ℹ $1${NC}"
+}
+
+# Show available external drives (macOS)
+cmd_list_drives() {
+    print_header "Available Storage Devices"
+    
+    if [ "$(uname)" != "Darwin" ]; then
+        print_warning "This command is optimized for macOS"
+        echo "For other systems, check /mnt or /media"
+        return
+    fi
+    
+    if ! ls -d /Volumes/* 2>/dev/null | grep -qv "^/Volumes/Macintosh"; then
+        print_warning "No external drives found"
+        return
+    fi
+    
+    echo "Available external drives:"
+    for drive in /Volumes/*; do
+        if [[ "$drive" != "/Volumes/Macintosh HD" ]]; then
+            drive_name=$(basename "$drive")
+            drive_used=$(du -sh "$drive" 2>/dev/null | cut -f1)
+            echo "  📁 $drive_name ($drive_used) - $drive"
+        fi
+    done
+    
+    echo ""
+    print_info "Example usage:"
+    echo "  ./docker-run.sh download /Volumes/MyDrive/datasets quickdraw"
+    echo "  DATA_PATH=/Volumes/MyDrive/datasets ./docker-run.sh train input 100 32 0.001"
+}
+
 # Check prerequisites
 check_prerequisites() {
     print_header "Checking Prerequisites"
@@ -42,6 +76,7 @@ check_prerequisites() {
         exit 1
     fi
     print_success "Docker installed"
+
     
     if ! command -v docker-compose &> /dev/null; then
         print_error "Docker Compose not found."
@@ -186,16 +221,38 @@ cmd_daemon() {
 
 # Download datasets
 cmd_download() {
-    local dataset_type="${1:-all}"
+    local data_path="${1:-.}/input"
+    local dataset_type="${2:-all}"
     
     print_header "Downloading Datasets"
+    
+    # Check if Python environment is set up
+    if [ ! -d "${PROJECT_ROOT}/.venv-datasets" ]; then
+        print_warning "Python environment not set up yet"
+        echo ""
+        echo "Setting up Python environment for dataset downloads..."
+        bash "${PROJECT_ROOT}/setup_dataset_env.sh"
+        echo ""
+    fi
+    
+    print_info "Data path: $data_path"
+    echo ""
     
     if [ ! -f "${PROJECT_ROOT}/download_datasets.sh" ]; then
         print_error "download_datasets.sh not found"
         exit 1
     fi
     
-    bash "${PROJECT_ROOT}/download_datasets.sh" "$dataset_type"
+    # If first arg looks like a dataset type, use default path
+    if [[ "$1" =~ ^(test|quickdraw|icons|all)$ ]]; then
+        data_path="${PROJECT_ROOT}/input"
+        dataset_type="$1"
+    fi
+    
+    # Support environment variable override
+    DATA_PATH="${DATA_PATH:-$data_path}"
+    
+    bash "${PROJECT_ROOT}/download_datasets.sh" "$DATA_PATH" "$dataset_type"
 }
 
 # View logs
@@ -231,27 +288,32 @@ SuperSVG Docker Helper Script
 Usage: ./docker-run.sh [command] [options]
 
 Commands:
-  build               Build the Docker image
-  download [type]     Download datasets (test|quickdraw|icons|all)
-  interactive         Start interactive bash shell
-  test [data] [bs]    Run quick test training (1 epoch)
+  build                 Build the Docker image
+  download [path] [type]  Download datasets (test|quickdraw|icons|all)
+  list-drives           Show available external storage devices (macOS)
+  interactive [path]    Start interactive bash shell
+  test [data] [bs]      Run quick test training (1 epoch)
   train [data] [e] [bs] [lr]  Run full training
-  daemon [data]       Run training in background
-  logs                View training logs
-  stop                Stop the container
-  clean               Clean up containers and images
-  check               Check prerequisites
-  help                Show this help message
+  daemon [data]         Run training in background
+  logs                  View training logs
+  stop                  Stop the container
+  clean                 Clean up containers and images
+  check                 Check prerequisites
+  help                  Show this help message
 
 Examples:
   ./docker-run.sh build
   ./docker-run.sh download test
+  ./docker-run.sh download /Volumes/MyDrive/datasets quickdraw
   ./docker-run.sh download quickdraw
   ./docker-run.sh test input 32
   ./docker-run.sh train input 100 32 0.001
+  ./docker-run.sh train /Volumes/MyDrive/datasets 100 32 0.001
   ./docker-run.sh daemon input
+  ./docker-run.sh list-drives
 
 Arguments:
+  path    Storage path (default: ./input, can be external drive)
   data    Data directory path (default: ./input)
   e       Number of epochs (default: 100)
   bs      Batch size (default: 32)
@@ -260,6 +322,19 @@ Arguments:
 
 Environment Variables:
   DATA_PATH           Override data directory path
+
+External Storage (macOS):
+  # List external drives
+  ./docker-run.sh list-drives
+  
+  # Download to external drive
+  ./docker-run.sh download /Volumes/ExternalDrive/datasets quickdraw
+  
+  # Train from external drive
+  ./docker-run.sh train /Volumes/ExternalDrive/datasets 100 32 0.001
+  
+  # Or use environment variable
+  DATA_PATH=/Volumes/ExternalDrive/datasets ./docker-run.sh train input 100
 
 EOF
 }
@@ -277,7 +352,10 @@ main() {
             cmd_build
             ;;
         download)
-            cmd_download "$2"
+            cmd_download "$2" "$3"
+            ;;
+        list-drives)
+            cmd_list_drives
             ;;
         interactive)
             check_prerequisites

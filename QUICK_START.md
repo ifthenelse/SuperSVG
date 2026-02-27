@@ -3,6 +3,9 @@
 ## ⚡ TL;DR (30 seconds)
 
 ```bash
+# 0. Setup Python environment (first time only, ~30 seconds)
+./setup_dataset_env.sh
+
 # 1. Download datasets (one-time, ~30 min to 2 hours depending on dataset)
 ./docker-run.sh download test              # Fastest (5 MB, 30 seconds)
 # or

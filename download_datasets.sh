@@ -1,12 +1,29 @@
 #!/bin/bash
 # SuperSVG Dataset Download Script
 # Downloads and prepares datasets for training
+# Supports external storage/custom paths
 
 set -e  # Exit on error
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
-DATA_DIR="${PROJECT_ROOT}/input"
+
+# Support external storage via environment variable
+# Usage: DATA_DIR=/Volumes/ExternalDrive/datasets ./download_datasets.sh test
+# Or: ./download_datasets.sh test /Volumes/ExternalDrive/datasets
+DATA_DIR="${1:-.}"
+DATASET_TYPE="${2:-all}"
+
+# If first argument looks like a dataset type, use default path
+if [[ "$DATA_DIR" =~ ^(test|quickdraw|icons|all|help)$ ]]; then
+    DATASET_TYPE="$DATA_DIR"
+    DATA_DIR="${PROJECT_ROOT}/input"
+fi
+
+# If not absolute path, make it relative to project
+if [[ "$DATA_DIR" != /* ]]; then
+    DATA_DIR="${PROJECT_ROOT}/${DATA_DIR}"
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -14,6 +31,21 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
+
+# Activate Python virtual environment
+VENV_DIR="${SCRIPT_DIR}/.venv-datasets"
+
+if [ ! -d "${VENV_DIR}" ]; then
+    echo -e "${RED}✗ Python virtual environment not found${NC}"
+    echo ""
+    echo "Please run the setup script first:"
+    echo "  ./setup_dataset_env.sh"
+    echo ""
+    exit 1
+fi
+
+# Activate venv
+source "${VENV_DIR}/bin/activate"
 
 # Helper functions
 print_header() {
@@ -73,56 +105,56 @@ download_quickdraw() {
         # Skip if already exists
         if [ -d "${CATEGORY_FOLDER}" ] && [ "$(ls -A "${CATEGORY_FOLDER}")" ]; then
             print_info "Already downloaded: $category"
-            ((DOWNLOADED++))
+            DOWNLOADED=$((DOWNLOADED + 1))
             continue
         fi
         
         mkdir -p "${CATEGORY_FOLDER}"
         
-        # Download from Quick Draw full dataset (PNG format)
-        # These are pre-rendered PNG files
-        URL="https://quickdraw.withgoogle.com/data/full/${category}.ndjson"
-        TEMP_FILE="/tmp/${category}.ndjson"
+        # Download from Quick Draw numpy bitmap dataset (public GCS)
+        # This provides 28x28 grayscale images that we upscale to 224x224 PNGs.
+        URL="https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/${category}.npy"
+        DOWNLOAD_FILE="${CATEGORY_FOLDER}/${category}.npy"
         
         echo -n "Downloading $category... "
         
-        if curl -f -s -L -o "${TEMP_FILE}" "${URL}" 2>/dev/null; then
-            # Convert NDJSON to PNG images
-            python3 << PYTHON_SCRIPT
-import json
-import base64
+        if curl -f -s -L -o "${DOWNLOAD_FILE}" "${URL}" 2>/dev/null; then
+            # Convert numpy bitmap to PNG images
+            if python3 << PYTHON_SCRIPT
 import os
-from pathlib import Path
 
-ndjson_file = "${TEMP_FILE}"
+try:
+    import numpy as np
+    from PIL import Image
+except Exception as e:
+    raise SystemExit(2)
+
+npy_file = "${DOWNLOAD_FILE}"
 output_folder = "${CATEGORY_FOLDER}"
 max_images = 500  # Limit images per category to manage size
 
+data = np.load(npy_file)
 images_saved = 0
-with open(ndjson_file, 'r') as f:
-    for idx, line in enumerate(f):
-        if images_saved >= max_images:
-            break
-        try:
-            obj = json.loads(line)
-            if 'image' in obj:
-                image_data = base64.b64decode(obj['image'])
-                filename = os.path.join(output_folder, f"{idx:06d}.png")
-                with open(filename, 'wb') as img_file:
-                    img_file.write(image_data)
-                images_saved += 1
-        except:
-            pass
+for idx in range(min(max_images, data.shape[0])):
+    img = data[idx].reshape(28, 28)
+    image = Image.fromarray(img, mode='L').resize((224, 224), resample=Image.NEAREST)
+    filename = os.path.join(output_folder, f"{idx:06d}.png")
+    image.save(filename)
+    images_saved += 1
 
 print(images_saved, end='')
 PYTHON_SCRIPT
-            
-            rm -f "${TEMP_FILE}"
-            print_success "$category ($(ls ${CATEGORY_FOLDER} | wc -l) images)"
-            ((DOWNLOADED++))
+            then
+                print_success "$category ($(ls ${CATEGORY_FOLDER} | wc -l) images)"
+                DOWNLOADED=$((DOWNLOADED + 1))
+            else
+                print_warning "Saved ${category}.npy but could not convert to PNG"
+                print_warning "Please run: ./setup_dataset_env.sh"
+                DOWNLOADED=$((DOWNLOADED + 1))
+            fi
         else
             print_warning "Failed to download $category"
-            ((FAILED++))
+            FAILED=$((FAILED + 1))
         fi
     done
     
@@ -155,13 +187,13 @@ download_tabler_icons() {
     # Convert SVGs to PNGs (creates subdirectories by icon family)
     print_info "Converting SVGs to PNGs (this may take a few minutes)..."
     
-    python3 << 'PYTHON_SCRIPT'
+    ICONS_DIR="${ICONS_DIR}" python3 << 'PYTHON_SCRIPT'
 import os
 import subprocess
 from pathlib import Path
 from collections import defaultdict
 
-icons_dir = os.path.expanduser("${DATA_DIR}/tabler_icons")
+icons_dir = os.environ.get("ICONS_DIR")
 svg_dir = os.path.join(icons_dir, "icons")
 png_output = os.path.join(icons_dir, "png_224")
 
@@ -274,7 +306,7 @@ show_help() {
     cat << 'EOF'
 SuperSVG Dataset Download Script
 
-Usage: ./download_datasets.sh [option]
+Usage: ./download_datasets.sh [data_path] [option]
 
 Options:
   test          Download minimal test dataset (fastest, ~5 MB)
@@ -284,24 +316,45 @@ Options:
   help          Show this help message
 
 Examples:
-  ./download_datasets.sh                    # Download all
-  ./download_datasets.sh test               # Quick verification
-  ./download_datasets.sh quickdraw          # Just Quick Draw
+  ./download_datasets.sh                              # Default to ./input, download all
+  ./download_datasets.sh test                         # Test dataset to ./input
+  ./download_datasets.sh ./input quickdraw            # Quick Draw to ./input
+  ./download_datasets.sh /Volumes/MyDrive/datasets all  # All to external drive
+  
+Environment Variables:
+  DATA_DIR                     Override data directory
 
-Data will be downloaded to: ./input/
+External Storage (macOS):
+  # List external drives
+  ls -la /Volumes/
+  
+  # Download to external drive
+  ./download_datasets.sh /Volumes/ExternalDrive/datasets quickdraw
+  
+  # Or use environment variable
+  DATA_DIR=/Volumes/ExternalDrive/datasets ./download_datasets.sh quickdraw
 
 After downloading, train with:
-  ./docker-run.sh train input 100 32 0.001
-  make train
+  ./docker-run.sh train /Volumes/ExternalDrive/datasets 100 32 0.001
+  DATA_PATH=/Volumes/ExternalDrive/datasets docker-compose up
 
 EOF
 }
 
 # Main logic
 main() {
-    local option="${1:-all}"
+    # Extract dataset type (could be in position 1 or 2)
+    case "$1" in
+        test|quickdraw|icons|all|help|--help|-h)
+            DATASET_TYPE="$1"
+            ;;
+        *)
+            # If DATA_DIR is specified, dataset type is second arg, default to all
+            DATASET_TYPE="${2:-all}"
+            ;;
+    esac
     
-    case "$option" in
+    case "$DATASET_TYPE" in
         test)
             setup_directories
             create_test_dataset
@@ -328,7 +381,7 @@ main() {
             show_help
             ;;
         *)
-            print_error "Unknown option: $option"
+            print_error "Unknown option: $DATASET_TYPE"
             show_help
             exit 1
             ;;
@@ -337,7 +390,9 @@ main() {
     echo ""
     print_success "Dataset download completed!"
     echo ""
-    echo "Next step: ./docker-run.sh train input 100 32 0.001"
+    echo "Data location: $DATA_DIR"
+    echo "Next step: ./docker-run.sh train $DATA_DIR 100 32 0.001"
+    echo "Or: DATA_PATH=$DATA_DIR docker-compose up"
 }
 
 main "$@"
