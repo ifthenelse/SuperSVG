@@ -242,12 +242,13 @@ create_test_dataset() {
     
     print_info "Generating 5 test images..."
     
-    python3 << 'PYTHON_SCRIPT'
+    DATA_DIR="${DATA_DIR}" python3 << 'PYTHON_SCRIPT'
 import os
 from PIL import Image, ImageDraw
 import random
 
-test_dir = os.path.expanduser("${DATA_DIR}/test/test_class")
+data_dir = os.environ.get("DATA_DIR", ".")
+test_dir = os.path.join(os.path.expanduser(data_dir), "test", "test_class")
 os.makedirs(test_dir, exist_ok=True)
 
 # Create simple test images
