@@ -14,9 +14,13 @@
 # 2. Build Docker image (one-time, ~15 min, run while data downloads!)
 ./docker-run.sh build
 
-# 3. Run training
-./docker-run.sh train input 100 32 0.001
+# 3. Test locally that it works (optional, will be slow on M3 via emulation)
+./docker-run.sh test input 16
+
+# 4. Deploy to cloud for actual training (recommended - see CLOUD_SETUP_README.md)
 ```
+
+**Note**: Docker image uses `linux/amd64` for cloud compatibility. Local M3 Mac testing works via Rosetta but is slower. For actual training, deploy to cloud GPU instance.
 
 **Or with make:**
 
@@ -45,33 +49,15 @@ make train
 
 ---
 
-## ❌ Why Container Was Exiting
-
-**Problem**: `docker-compose up` would start but immediately exit with code 0
-
-**Root Causes**:
-
-1. ❌ `/path/to/your/dataset` - placeholder path didn't exist
-2. ❌ Missing data at `/data` mount point
-3. ❌ Deprecated `version: '3.8'` warning
-
-**Solution**: ✅ Fixed in updated `docker-compose.yml`:
-
-- Removed deprecated version field
-- Changed to `${DATA_PATH:-.}/input:/data` (looks for local `input/` directory)
-- Set interactive mode by default (starts bash instead of running main_coarse.py immediately)
-
----
-
 ## 📁 Expected Directory Structure
 
 ```
 SuperSVG/
-├── docker-compose.yml          ← Updated (fixed)
-├── docker-run.sh               ← New helper script
-├── Dockerfile.mamba            ← Unchanged
-├── main_coarse.py              ← Unchanged
-├── DOCKER_SETUP_GUIDE.md       ← New detailed guide
+├── docker-compose.yml
+├── docker-run.sh
+├── Dockerfile.mamba
+├── main_coarse.py
+├── DOCKER_SETUP_GUIDE.md
 │
 ├── input/                       ← Add your images here
 │   ├── class_1/
@@ -80,7 +66,7 @@ SuperSVG/
 │   └── class_2/
 │       └── image3.jpg
 │
-├── output_coarse/              ← Auto-created, training outputs
+├── output_coarse/               ← Auto-created, training outputs
 ├── logs/                        ← Auto-created, training logs
 └── checkpoints/                 ← Auto-created, model checkpoints
 ```
@@ -170,14 +156,19 @@ docker-compose logs -f  # In another terminal
 
 ## 📊 Training Time Estimates
 
-| Hardware       | Dataset (1M) | Icons (30K) |
-| -------------- | ------------ | ----------- |
-| MacBook M3 Pro | ~2-3 days    | 4-6 hours   |
-| RTX 3070       | ~18-24h      | 2-3 hours   |
-| RTX 4080       | ~12-16h      | 1-2 hours   |
-| CPU Only       | ~5-7 days    | 12-24 hours |
+| Hardware           | Dataset (1M) | Icons (30K) | Notes                            |
+| ------------------ | ------------ | ----------- | -------------------------------- |
+| **Cloud RTX 4090** | ~8-12h       | 1-2 hours   | **Recommended for production**   |
+| **Cloud RTX 3090** | ~12-18h      | 2-3 hours   | Good price/performance           |
+| Cloud RTX 3070     | ~18-24h      | 2-3 hours   | Budget option                    |
+| MacBook M3 Pro     | Very slow    | Very slow   | Local testing only (via Rosetta) |
+| CPU Only (cloud)   | ~5-7 days    | 12-24 hours | Not recommended                  |
 
-**Recommendation**: Start with small test dataset (5 images) to verify setup, then scale up.
+**Recommended Workflow**:
+
+1. Test locally with small dataset (5 images) to verify setup works
+2. Deploy to cloud GPU for actual training (see `CLOUD_SETUP_README.md`)
+3. Use external storage for datasets if needed
 
 ---
 
@@ -243,14 +234,15 @@ Verify prerequisites are met
 
 ## 🐛 Troubleshooting
 
-| Error                                   | Fix                                                        |
-| --------------------------------------- | ---------------------------------------------------------- |
-| `Mount denied: The path does not exist` | `mkdir -p input && ls -la input/`                          |
-| `No such file or directory: /data`      | Check `docker-compose config \| grep source`               |
-| Container exits immediately             | `./docker-run.sh interactive input` to see error           |
-| Out of memory errors                    | Reduce batch size: `--batch_size=16`                       |
-| "Cannot connect to Docker daemon"       | Start Docker Desktop                                       |
-| Slow training on macOS                  | Normal! M3 Pro single-GPU: ~12-15 min/epoch for 1M dataset |
+| Error                                   | Fix                                                            |
+| --------------------------------------- | -------------------------------------------------------------- |
+| `Mount denied: The path does not exist` | `mkdir -p input && ls -la input/`                              |
+| Very slow on M3 Mac                     | Expected - using AMD64 via Rosetta. Deploy to cloud for speed  |
+| `cannot execute binary file`            | Rebuild with `./docker-run.sh build` (fixed in latest version) |
+| Container exits immediately             | `./docker-run.sh interactive input` to see error               |
+| Out of memory errors                    | Reduce batch size: `--batch_size=16`                           |
+| "Cannot connect to Docker daemon"       | Start Docker Desktop                                           |
+| Slow training on macOS                  | Normal! M3 Pro single-GPU: ~12-15 min/epoch for 1M dataset     |
 
 ---
 
@@ -310,9 +302,14 @@ docker stats supersvg-training
 
 ## 🎓 Next Steps
 
-1. **Review main README.md** for training parameters and architecture
-2. **Start with test dataset** (5-10 images) to verify everything works
-3. **Then scale to full dataset** (Quick Draw, ImageNet, Icons)
-4. **Monitor and optimize** batch size based on your hardware
+Download test dataset locally** to verify setup: `./docker-run.sh download test` 2. **Quick local test** (will be slow on M3): `./docker-run.sh test input 16` 3. **Review CLOUD_SETUP_README.md** for cloud deployment options (RunPod, Lambda Labs, AWS) 4. **Deploy to cloud GPU** for actual training with full dataset 5. **Monitor and optimize\*\* batch size based on cloud hardware
+
+**Recommended Cloud Platforms**:
+
+- **RunPod**: Pre-configured GPU instances, ~$0.34/hr for RTX 3090
+- **Lambda Labs**: Dedicated GPU cloud, ~$0.50/hr for RTX 4090
+- **AWS EC2**: Enterprise option with G4/P3 instances
+
+See `CLOUD_SETUP_README.md` and helper scripts: `setup-lambda-labs.sh`, `setup-aws-ec2.sh`s) 4. **Monitor and optimize** batch size based on your hardware
 
 Happy training! 🚀

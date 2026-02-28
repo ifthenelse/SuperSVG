@@ -94,7 +94,7 @@ check_prerequisites() {
 
 # Verify data directory
 verify_data() {
-    DATA_PATH="${1:-.}/input"
+    local DATA_PATH="${1}"
     
     if [ ! -d "$DATA_PATH" ]; then
         print_warning "Data directory '$DATA_PATH' not found"
@@ -130,7 +130,7 @@ cmd_build() {
 
 # Start interactive shell
 cmd_interactive() {
-    local data_path="${1:-.}/input"
+    local data_path="${1:-./input}"
     
     print_header "Starting Interactive Shell"
     print_warning "Make sure data is in: $data_path"
@@ -147,7 +147,7 @@ cmd_interactive() {
 
 # Run test training
 cmd_test() {
-    local data_path="${1:-.}/input"
+    local data_path="${1:-./input}"
     local batch_size="${2:-16}"
     
     print_header "Running Test Training (1 epoch)"
@@ -168,7 +168,7 @@ cmd_test() {
 
 # Run full training
 cmd_train() {
-    local data_path="${1:-.}/input"
+    local data_path="${1:-./input}"
     local num_epochs="${2:-100}"
     local batch_size="${3:-32}"
     local learning_rate="${4:-0.001}"
@@ -221,7 +221,7 @@ cmd_daemon() {
 
 # Download datasets
 cmd_download() {
-    local data_path="${1:-.}/input"
+    local data_path="${1:-./input}"
     local dataset_type="${2:-all}"
     
     print_header "Downloading Datasets"

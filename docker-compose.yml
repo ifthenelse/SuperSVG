@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.mamba
+    # Force AMD64 for cloud compatibility (works on M3 Mac via Rosetta but slower)
+    # For cloud deployment: RunPod, Lambda Labs, AWS EC2, etc.
+    platform: linux/amd64
     image: supersvg:latest
     container_name: supersvg-training
     volumes:
