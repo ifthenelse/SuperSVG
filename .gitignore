@@ -284,3 +284,7 @@ BUILD/
 
 # Specstory
 .specstory/
+
+# Exported Docker images
+*.tar
+*.tar.gz

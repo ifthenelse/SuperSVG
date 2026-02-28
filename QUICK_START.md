@@ -14,13 +14,11 @@
 # 2. Build Docker image (one-time, ~15 min, run while data downloads!)
 ./docker-run.sh build
 
-# 3. Test locally that it works (optional, will be slow on M3 via emulation)
-./docker-run.sh test input 16
-
-# 4. Deploy to cloud for actual training (recommended - see CLOUD_SETUP_README.md)
+# 3. SKIP local testing on M3 Mac - deploy to cloud (see CLOUD_SETUP_README.md)
+#    OR export image: docker save supersvg:latest | gzip > supersvg.tar.gz
 ```
 
-**Note**: Docker image uses `linux/amd64` for cloud compatibility. Local M3 Mac testing works via Rosetta but is slower. For actual training, deploy to cloud GPU instance.
+**Note for M3 Mac Users**: Docker image uses `linux/amd64` for cloud compatibility. Rosetta emulation may not work reliably for testing. **Recommended**: Skip local testing and deploy directly to cloud GPU instance. See [CLOUD_SETUP_README.md](CLOUD_SETUP_README.md) for deployment guides.
 
 **Or with make:**
 
@@ -234,15 +232,33 @@ Verify prerequisites are met
 
 ## 🐛 Troubleshooting
 
-| Error                                   | Fix                                                            |
-| --------------------------------------- | -------------------------------------------------------------- |
-| `Mount denied: The path does not exist` | `mkdir -p input && ls -la input/`                              |
-| Very slow on M3 Mac                     | Expected - using AMD64 via Rosetta. Deploy to cloud for speed  |
-| `cannot execute binary file`            | Rebuild with `./docker-run.sh build` (fixed in latest version) |
-| Container exits immediately             | `./docker-run.sh interactive input` to see error               |
-| Out of memory errors                    | Reduce batch size: `--batch_size=16`                           |
-| "Cannot connect to Docker daemon"       | Start Docker Desktop                                           |
-| Slow training on macOS                  | Normal! M3 Pro single-GPU: ~12-15 min/epoch for 1M dataset     |
+| Error                                   | Fix                                                                    |
+| --------------------------------------- | ---------------------------------------------------------------------- |
+| `cannot execute binary file` on M3 Mac  | **Expected** - Rosetta limitation. Deploy to cloud instead (see below) |
+| `Mount denied: The path does not exist` | `mkdir -p input && ls -la input/`                                      |
+| Very slow on M3 Mac                     | Expected - using AMD64 via Rosetta. Deploy to cloud for speed          |
+| Container exits immediately             | Normal on M3 - skip to cloud deployment                                |
+| Out of memory errors (on cloud)         | Reduce batch size: `--batch_size=16`                                   |
+| "Cannot connect to Docker daemon"       | Start Docker Desktop                                                   |
+
+### M3 Mac Workaround for Local Testing
+
+If you need to test locally before cloud deployment:
+
+```bash
+# Build ARM64 version (won't work on cloud, but works locally)
+# Temporarily edit docker-compose.yml: change platform to linux/arm64
+./docker-run.sh build
+
+# Test locally
+./docker-run.sh test input 16
+
+# Then rebuild AMD64 for cloud
+# Change docker-compose.yml back to linux/amd64
+./docker-run.sh build
+```
+
+**Recommended**: Skip local testing, go straight to cloud deployment.
 
 ---
 
@@ -285,13 +301,32 @@ Before starting training:
 docker stats supersvg-training
 ```
 
-**Access Training Outputs**:
+### For M3 Mac Users (Recommended Path):
 
-- Outputs: `output_coarse/` (updated in real-time)
-- Logs: `logs/` (training progress)
-- Checkpoints: `checkpoints/` (saved models)
+1. ✅ **Setup complete** - You have:
+   - Python environment set up
+   - Datasets downloaded (or ready to download on cloud)
+   - Docker image built (AMD64 for cloud)
 
-**Speed Up for Testing**:
+2. 🚀 **Deploy to Cloud GPU**:
+   - See [CLOUD_SETUP_README.md](CLOUD_SETUP_README.md) for detailed guides
+   - Transfer your datasets to cloud instance
+   - Run training on real GPU hardware
+
+3. 📊 **Cloud Platforms**:
+   - **RunPod**: ~$0.34/hr for RTX 3090 ([setup-runpod.sh](choose-platform.sh))
+   - **Lambda Labs**: ~$0.50/hr for RTX 4090 ([setup-lambda-labs.sh](setup-lambda-labs.sh))
+   - **AWS EC2**: Enterprise option ([setup-aws-ec2.sh](setup-aws-ec2.sh))
+
+### Export Docker Image for Cloud:
+
+```bash
+# Save image to tar file (for transferring to cloud)
+docker save supersvg:latest | gzip > supersvg.tar.gz
+
+# On cloud instance, load the image:
+gunzip -c supersvg.tar.gz | docker load
+```
 
 ```bash
 # Quick test with tiny batch

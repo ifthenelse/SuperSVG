@@ -132,6 +132,11 @@ cmd_build() {
 cmd_interactive() {
     local data_path="${1:-./input}"
     
+    # Ensure relative paths start with ./ for Docker bind mount
+    if [[ "$data_path" != /* ]] && [[ "$data_path" != ./* ]] && [[ "$data_path" != ../* ]]; then
+        data_path="./$data_path"
+    fi
+    
     print_header "Starting Interactive Shell"
     print_warning "Make sure data is in: $data_path"
     
@@ -149,6 +154,11 @@ cmd_interactive() {
 cmd_test() {
     local data_path="${1:-./input}"
     local batch_size="${2:-16}"
+    
+    # Ensure relative paths start with ./ for Docker bind mount
+    if [[ "$data_path" != /* ]] && [[ "$data_path" != ./* ]] && [[ "$data_path" != ../* ]]; then
+        data_path="./$data_path"
+    fi
     
     print_header "Running Test Training (1 epoch)"
     
@@ -168,6 +178,11 @@ cmd_test() {
 
 # Run full training
 cmd_train() {
+    # Ensure relative paths start with ./ for Docker bind mount
+    if [[ "$data_path" != /* ]] && [[ "$data_path" != ./* ]] && [[ "$data_path" != ../* ]]; then
+        data_path="./$data_path"
+    fi
+    
     local data_path="${1:-./input}"
     local num_epochs="${2:-100}"
     local batch_size="${3:-32}"
@@ -192,8 +207,11 @@ cmd_train() {
         micromamba run -n live python main_coarse.py \
         --data_path=/data \
         --num_epochs="$num_epochs" \
-        --batch_size="$batch_size" \
-        --lr="$learning_rate"
+        # Ensure relative paths start with ./ for Docker bind mount
+    if [[ "$data_path" != /* ]] && [[ "$data_path" != ./* ]] && [[ "$data_path" != ../* ]]; then
+        data_path="./$data_path"
+    fi
+            --lr="$learning_rate"
     
     print_success "Training completed"
     print_warning "Results saved to: output_coarse/"
