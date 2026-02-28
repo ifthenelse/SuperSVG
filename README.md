@@ -1,948 +1,551 @@
-# SuperSVG: Superpixel-based Scalable Vector Graphics Synthesis
+# SuperSVG
 
-### [Paper](https://openaccess.thecvf.com/content/CVPR2024/papers/Hu_SuperSVG_Superpixel-based_Scalable_Vector_Graphics_Synthesis_CVPR_2024_paper.pdf) | [Suppl](https://openaccess.thecvf.com/content/CVPR2024/supplemental/Hu_SuperSVG_Superpixel-based_Scalable_CVPR_2024_supplemental.pdf)
+SuperSVG is a CVPR 2024 project for superpixel-based SVG synthesis. This repository includes model code, DiffVG dependencies, Docker-based runtime, dataset automation scripts, and cloud setup helpers.
 
-<!-- <br> -->
+Paper links:
 
-[Teng Hu](https://github.com/sjtuplayer),
-[Ran Yi](https://yiranran.github.io/),
-[Baihong Qian](https://github.com/CherryQBH),
-[Jiangning Zhang](https://zhangzjn.github.io/),
-[Paul L. Rosin](https://scholar.google.com/citations?hl=zh-CN&user=V5E7JXsAAAAJ),
-and [Yu-Kun Lai](https://scholar.google.com/citations?user=0i-Nzv0AAAAJ&hl=zh-CN&oi=sra)
+- CVPR Paper: https://openaccess.thecvf.com/content/CVPR2024/papers/Hu_SuperSVG_Superpixel-based_Scalable_Vector_Graphics_Synthesis_CVPR_2024_paper.pdf
+- Supplementary: https://openaccess.thecvf.com/content/CVPR2024/supplemental/Hu_SuperSVG_Superpixel-based_Scalable_CVPR_2024_supplemental.pdf
 
-<!-- <br> -->
+---
 
-![image](imgs/framework.jpg)
+## Documentation Policy
 
-# Setup
+- This `README.md` is the single source of truth for setup, runtime, dataset, and cloud operations.
+- Operational changes (commands, prerequisites, paths, platform notes, costs, API contract updates) must be applied here first.
+- Supporting docs (`QUICK_START.md`, `DOCKER_SETUP_GUIDE.md`, `DOCKER_SOLUTION.md`, `DATASETS.md`, `EXTERNAL_STORAGE.md`, `CLOUD_SETUP_README.md`) remain redirect stubs and should not contain duplicated procedures.
+- If behavior changes in scripts (`docker-run.sh`, `download_datasets.sh`, cloud setup scripts), update this README in the same change.
 
-We provide two ways to set up SuperSVG: **Docker (Recommended)** and **Local Installation**.
+---
 
-## Option 1: Docker Setup (Recommended)
+## 1) Project Overview
 
-The easiest way to get started is using Docker, which handles all dependencies automatically.
+### What this repository provides
 
-### Prerequisites
+- Docker-first environment for reproducible training (`Dockerfile.mamba`, `docker-compose.yml`)
+- Helper CLI for common operations (`docker-run.sh`)
+- Automated dataset preparation (`download_datasets.sh`, `setup_dataset_env.sh`)
+- Local-to-cloud transition support (`setup-lambda-labs.sh`, `setup-aws-ec2.sh`, `choose-platform.sh`)
 
-- [Docker](https://docs.docker.com/get-docker/) installed on your system
-- NVIDIA Docker runtime (for GPU support, optional)
+### Typical workflow
 
-### Build the Docker Image
+1. Prepare environment
+2. Download/prepare dataset
+3. Build Docker image
+4. Run test training
+5. Run full training (usually on cloud GPU)
+6. (Optional) expose as service using the API contract in section 8
+
+---
+
+## 2) Hardware
+
+### 2.1 Minimum requirements
+
+#### Local development (sanity checks only)
+
+- CPU: 4+ cores
+- RAM: 16 GB
+- Storage: 30+ GB free (50+ GB recommended)
+- Docker Desktop (or Docker Engine + Compose)
+- Python 3.9+ on host for dataset preparation
+
+#### Cloud training minimum
+
+- GPU: 16+ GB VRAM (A10G, RTX 3080/3090 class or better)
+- vCPU: 8+
+- RAM: 32+ GB
+- Storage: 100+ GB SSD/NVMe
+
+### 2.2 Ideal requirements
+
+#### Local
+
+- CPU: 8+ cores
+- RAM: 32+ GB
+- Storage: 100+ GB SSD
+- External dataset drive optional
+
+#### Cloud (recommended)
+
+- GPU: RTX 4090 (24 GB) or better
+- vCPU: 16+
+- RAM: 64+ GB
+- Storage: 200+ GB NVMe
+
+### Important architecture note
+
+- `docker-compose.yml` is pinned to `platform: linux/amd64` to match cloud execution targets.
+- On Apple Silicon, AMD64 emulation may be slow or unreliable for runtime binaries. Use local mostly for setup checks; use cloud for actual training.
+
+---
+
+## 3) Docker Solution (Canonical Runtime)
+
+### Files
+
+- `Dockerfile.mamba`: builds runtime with micromamba + Python env + dependencies
+- `docker-compose.yml`: default service definition and mounts
+- `docker-run.sh`: high-level wrapper for build/download/test/train/etc.
+
+### Docker volume contract
+
+Container expects:
+
+- `/data` -> input dataset root
+- `/workspace/output_coarse` -> outputs
+- `/workspace/logs` -> logs
+- `/workspace/checkpoints` -> checkpoints
+
+### Core commands
 
 ```bash
-# Clone the repository
-git clone <repository-url>
+# build image
+./docker-run.sh build
+
+# interactive shell
+./docker-run.sh interactive ./input
+
+# quick test (1 epoch)
+./docker-run.sh test ./input 16
+
+# full train
+./docker-run.sh train ./input 100 32 0.001
+
+# background mode
+./docker-run.sh daemon ./input
+./docker-run.sh logs
+./docker-run.sh stop
+```
+
+### Data path override
+
+You can bind an external directory by passing an explicit path:
+
+```bash
+./docker-run.sh train /absolute/path/to/dataset 100 32 0.001
+```
+
+Or with env var:
+
+```bash
+DATA_PATH=/absolute/path/to/dataset ./docker-run.sh train ./input 100 32 0.001
+```
+
+---
+
+## 4) Datasets
+
+This repo includes automated dataset preparation.
+
+### Supported dataset options
+
+- `test`: small synthetic smoke-test dataset (~5 MB)
+- `quickdraw`: 25 categories, up to ~500 PNG images/category (from Quick Draw numpy bitmap source)
+- `icons`: Tabler Icons clone + SVG→PNG conversion
+- `all`: runs all three
+
+### Setup dataset Python environment
+
+```bash
+./setup_dataset_env.sh
+```
+
+Installs host-side dependencies in `.venv-datasets` (`numpy`, `pillow`) used by dataset scripts.
+
+### Download commands
+
+```bash
+# default path
+./docker-run.sh download test
+./docker-run.sh download quickdraw
+./docker-run.sh download icons
+./docker-run.sh download all
+
+# explicit destination path
+./docker-run.sh download /absolute/path/to/datasets quickdraw
+```
+
+### Dataset directory layout (expected)
+
+```text
+<dataset-root>/
+  test/
+    test_class/
+      test_000.jpg ...
+  quickdraw/
+    airplane/
+      000000.png ...
+    ...
+  tabler_icons/
+    png_224/
+      <category>/
+        *.png
+```
+
+### Notes
+
+- Quick Draw source URL used by script: Google Cloud Storage numpy bitmap dataset.
+- Icons conversion relies on ImageMagick `convert` when available.
+- Re-running download commands is incremental for already prepared parts.
+
+---
+
+## 5) Local Installation & Run (Windows / macOS / Linux)
+
+## 5.1 Prerequisites by OS
+
+### Windows 11/10
+
+- Docker Desktop (WSL2 backend enabled)
+- Git for Windows
+- Python 3.9+ (for dataset setup scripts)
+- Recommended shell: PowerShell or Git Bash
+
+### macOS (Intel/Apple Silicon)
+
+- Docker Desktop
+- Python 3.9+
+- For Apple Silicon: expect AMD64 emulation limitations (cloud-first training recommended)
+
+### Linux (Ubuntu 22.04+ recommended)
+
+- Docker Engine + Docker Compose plugin
+- Python 3.9+
+- `git`, `curl`
+
+## 5.2 Linear local setup process
+
+```bash
+# 1) clone
+git clone https://github.com/sjtuplayer/SuperSVG.git
 cd SuperSVG
 
-# Build the Docker image
-docker build -f Dockerfile.mamba -t supersvg:latest .
+# 2) host dataset env (one time)
+./setup_dataset_env.sh
+
+# 3) download small test data
+./docker-run.sh download test
+
+# 4) build docker image
+./docker-run.sh build
+
+# 5) run smoke test training
+./docker-run.sh test ./input 16
 ```
 
-The build process will:
+## 5.3 If using external storage
 
-- Set up a Python 3.7 environment with all required dependencies
-- Install PyTorch, DiffVG, and other necessary packages
-- Configure the environment for SuperSVG training
-
-### Docker Usage Examples
-
-#### 1. Basic Training with ImageNet Dataset
+### macOS example
 
 ```bash
-# Assuming your ImageNet dataset is in /path/to/imagenet
-docker run --rm -it \
-  -v /path/to/imagenet:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  supersvg:latest
+./docker-run.sh list-drives
+./docker-run.sh download /Volumes/MyDrive/supersvg_data quickdraw
+./docker-run.sh train /Volumes/MyDrive/supersvg_data 100 32 0.001
 ```
 
-#### 2. Interactive Development Mode
+### Windows example
+
+Use absolute Windows path in Docker Desktop shared drives context.
+
+```powershell
+./docker-run.sh download "D:/supersvg_data" quickdraw
+./docker-run.sh train "D:/supersvg_data" 100 32 0.001
+```
+
+### Linux example
 
 ```bash
-# Start an interactive session for development/debugging
-docker run --rm -it \
-  -v /path/to/your/dataset:/data \
-  -v $(pwd):/workspace \
-  --entrypoint bash \
-  supersvg:latest
+./docker-run.sh download /mnt/data/supersvg quickdraw
+./docker-run.sh train /mnt/data/supersvg 100 32 0.001
 ```
 
-#### 3. Custom Training Parameters
+## 5.4 Local troubleshooting quick list
+
+- `cannot execute binary file` on Apple Silicon with AMD64 image: expected in some cases; use cloud runtime.
+- No images found: verify path and ensure dataset root contains image files.
+- Docker daemon unavailable: start Docker Desktop / service.
+
+---
+
+## 6) Cloud Setup Options (Platforms, Tradeoffs, Costs)
+
+Cost numbers below are indicative and vary by region/availability.
+
+| Platform          | Typical GPU      | Typical Hourly Cost | Pros                      | Cons                      | Best For             |
+| ----------------- | ---------------- | ------------------: | ------------------------- | ------------------------- | -------------------- |
+| RunPod            | RTX 4090 / A5000 |         ~$0.44-0.69 | Strong price/perf, simple | Marketplace variability   | Most users           |
+| Vast.ai           | RTX 4090 / A6000 |         ~$0.30-0.90 | Lowest cost options       | Provider variability      | Budget experiments   |
+| AWS EC2 Spot      | A10G / V100      |         ~$0.36-1.20 | Reliability, ecosystem    | More setup complexity     | Production workloads |
+| Lambda Labs       | A100 / A6000     |         ~$0.80-1.99 | Good GPU options          | Frequent capacity limits  | If available         |
+| GCP (preemptible) | V100 / A100      |            variable | Strong infra              | Pricing/config complexity | GCP-native teams     |
+
+### Training budget examples
+
+- Icon dataset runs (2-3h): roughly ~$1-$4 depending platform/GPU.
+- Quick Draw-scale runs (10-15h): roughly ~$4-$20 depending platform/GPU.
+- Large/full runs (50-70h): roughly ~$20-$90 depending platform/GPU.
+
+### Recommendation order
+
+1. RunPod RTX 4090
+2. Vast.ai RTX 4090
+3. AWS EC2 Spot (A10G/V100)
+4. Lambda Labs when capacity exists
+
+---
+
+## 7) Install & Run on Cloud Infrastructure
+
+## 7.1 RunPod / Vast.ai / Lambda-style flow
 
 ```bash
-# Run with custom parameters
-docker run --rm -it \
-  -v /path/to/dataset:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  supersvg:latest \
-  micromamba run -n live python main_coarse.py \
-    --data_path=/data \
-    --batch_size=16 \
-    --num_epochs=100
+# On cloud VM/pod
+curl -O https://raw.githubusercontent.com/sjtuplayer/SuperSVG/master/setup-lambda-labs.sh
+chmod +x setup-lambda-labs.sh
+./setup-lambda-labs.sh
 ```
 
-#### 4. GPU Support (if available)
+This script automates:
+
+- system packages
+- NVIDIA/container runtime checks
+- Docker setup
+- repo clone
+- image build
+- launcher scripts (`~/train_supersvg.sh`, `~/monitor_training.sh`)
+
+## 7.2 AWS EC2 flow
 
 ```bash
-# For NVIDIA GPUs with docker runtime
-docker run --rm -it --gpus all \
-  -v /path/to/dataset:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  supersvg:latest
+curl -O https://raw.githubusercontent.com/sjtuplayer/SuperSVG/master/setup-aws-ec2.sh
+chmod +x setup-aws-ec2.sh
+./setup-aws-ec2.sh
 ```
 
-#### 5. Mount Multiple Directories
+AWS script additionally supports:
+
+- S3 sync helpers
+- spot-instance handling helpers
+- monitoring/cost estimation scripts
+
+## 7.3 Dataset transfer to cloud
+
+### Option A: from local machine
 
 ```bash
-# Mount dataset, outputs, and checkpoints
-docker run --rm -it \
-  -v /path/to/dataset:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  -v $(pwd)/checkpoints:/workspace/checkpoints \
-  -v $(pwd)/logs:/workspace/logs \
-  supersvg:latest
+scp -r /local/path/to/dataset ubuntu@<cloud-ip>:~/supersvg_data/
 ```
 
-#### 6. Run with Docker Compose (Alternative)
-
-Create a `docker-compose.yml` file:
-
-```yaml
-version: "3.8"
-services:
-  supersvg:
-    build:
-      context: .
-      dockerfile: Dockerfile.mamba
-    volumes:
-      - /path/to/your/dataset:/data
-      - ./output_coarse:/workspace/output_coarse
-      - ./logs:/workspace/logs
-    environment:
-      - CUDA_VISIBLE_DEVICES=0
-    command:
-      [
-        "micromamba",
-        "run",
-        "-n",
-        "live",
-        "python",
-        "main_coarse.py",
-        "--data_path=/data",
-      ]
-```
-
-Then run:
+### Option B: pull directly on cloud host
 
 ```bash
-docker-compose up
+cd ~/supersvg_data
+# Download or copy from object storage
 ```
 
-### Docker Tips
-
-- **Data Persistence**: Always mount volumes for outputs (`output_coarse/`, `logs/`) to persist training results
-- **Performance**: For large datasets, ensure your Docker has sufficient memory allocated
-- **Development**: Use interactive mode (`-it --entrypoint bash`) for debugging and development
-- **Logs**: Monitor training progress with `docker logs <container_id>` if running in detached mode
-
-### Hardware Requirements & Performance
-
-#### 💻 **Local Hardware Recommendations**
-
-**Minimum Requirements:**
-
-- **CPU**: 4+ cores, 2.5GHz+ (Intel i5/AMD Ryzen 5 or equivalent)
-- **RAM**: 16GB+ (32GB recommended for large datasets)
-- **Storage**: 50GB+ free space for datasets and checkpoints
-- **GPU**: Optional but highly recommended (see GPU section below)
-
-**Recommended Hardware:**
-
-- **CPU**: 8+ cores, 3.0GHz+ (Intel i7/AMD Ryzen 7 or Apple M-series)
-- **RAM**: 32GB+ (64GB for production training)
-- **Storage**: 100GB+ SSD for fast I/O
-- **GPU**: NVIDIA RTX 3070/4070+ or Tesla V100+ with 8GB+ VRAM
-
-#### 🚀 **GPU Support & Performance**
-
-**NVIDIA GPUs (CUDA):**
-
-- **Entry Level**: RTX 3060 (12GB) - ~3-4x speedup over CPU
-- **Mid Range**: RTX 3070/4070 (8-12GB) - ~5-7x speedup
-- **High End**: RTX 3080/4080/4090 (16-24GB) - ~8-12x speedup
-- **Professional**: Tesla V100, A100 (16-80GB) - ~10-15x speedup
-
-**Apple Silicon (Metal Performance Shaders):**
-
-- **M1/M2**: Supported via PyTorch MPS backend - ~2-3x speedup
-- **M1/M2 Pro/Max**: Better performance with unified memory - ~3-4x speedup
-- **M3/M3 Pro/Max**: Latest optimizations - ~4-5x speedup
-
-#### ⏱️ **Training Time Expectations**
-
-Based on real-world testing across different hardware configurations:
-
-**Quick Draw Dataset (50M samples, 100 epochs):**
-
-| Hardware                               | Training Time | Notes                                    |
-| -------------------------------------- | ------------- | ---------------------------------------- |
-| **CPU Only** (Intel i7-12700K)         | ~5-7 days     | Not recommended for full dataset         |
-| **MacBook M3 Pro** (12-core, 18GB RAM) | ~2-3 days     | Excellent for development/small datasets |
-| **RTX 3070** (8GB VRAM)                | ~18-24 hours  | Good balance of cost/performance         |
-| **RTX 4080** (16GB VRAM)               | ~12-16 hours  | Recommended for serious training         |
-| **Tesla V100** (32GB VRAM)             | ~8-12 hours   | Cloud/enterprise option                  |
-| **A100** (80GB VRAM)                   | ~6-8 hours    | Fastest option, expensive                |
-
-**Icon Datasets (Combined: Feather + Tabler + TU-Berlin, ~30K samples, 200 epochs):**
-
-| Hardware             | Training Time | Cost Estimate |
-| -------------------- | ------------- | ------------- |
-| **MacBook M3 Pro**   | ~4-6 hours    | Free (local)  |
-| **RTX 3070**         | ~2-3 hours    | Free (local)  |
-| **Cloud GPU** (V100) | ~1-2 hours    | ~$2-4 USD     |
-| **Cloud GPU** (A100) | ~45-90 min    | ~$3-6 USD     |
-
-#### ☁️ **Cloud & IaaS Deployment**
-
-**Recommended Cloud Providers:**
-
-1. **Google Cloud Platform (GCP)**
-
-   ```bash
-   # Create VM with GPU support
-   gcloud compute instances create supersvg-training \
-     --zone=us-central1-a \
-     --machine-type=n1-standard-8 \
-     --accelerator=type=nvidia-tesla-v100,count=1 \
-     --image-family=pytorch-latest-gpu \
-     --image-project=deeplearning-platform-release \
-     --boot-disk-size=100GB \
-     --maintenance-policy=TERMINATE
-
-   # Install Docker and run SuperSVG
-   gcloud compute ssh supersvg-training
-   sudo docker run --rm --gpus all \
-     -v /data:/data \
-     -v /output:/workspace/output_coarse \
-     supersvg:latest
-   ```
-
-   **Cost**: ~$1.5-3/hour (V100), ~$2.5-5/hour (A100)
-
-2. **Amazon Web Services (AWS)**
-
-   ```bash
-   # Launch EC2 with Deep Learning AMI
-   aws ec2 run-instances \
-     --image-id ami-0c02fb55956c7d316 \
-     --instance-type p3.2xlarge \
-     --key-name your-key-pair \
-     --security-groups your-security-group
-
-   # SSH and run container
-   ssh -i your-key.pem ubuntu@instance-ip
-   docker run --rm --gpus all \
-     -v ~/data:/data \
-     -v ~/output:/workspace/output_coarse \
-     supersvg:latest
-   ```
-
-   **Cost**: ~$3-4/hour (p3.2xlarge with V100)
-
-3. **Paperspace Gradient**
-
-   ```bash
-   # Simple deployment with pre-built environment
-   gradient jobs create \
-     --container supersvg:latest \
-     --machineType V100 \
-     --command "python main_coarse.py --data_path=/data"
-   ```
-
-   **Cost**: ~$0.5-1.5/hour (depending on GPU tier)
-
-4. **RunPod**
-   ```bash
-   # Cost-effective GPU cloud option
-   # Use their web interface or API to deploy
-   # Template: PyTorch + CUDA
-   # Container: supersvg:latest
-   ```
-   **Cost**: ~$0.3-1/hour (RTX 3070-4090 range)
-
-#### 🖥️ **MacBook M3 Pro Example (Detailed)**
-
-**Test Configuration:**
-
-- **Model**: MacBook Pro 14" M3 Pro (2023)
-- **CPU**: 12-core (8 performance + 4 efficiency)
-- **GPU**: 18-core (Metal Performance Shaders)
-- **RAM**: 18GB unified memory
-- **Storage**: 1TB SSD
-- **OS**: macOS Sonoma 14.x
-- **Docker**: Docker Desktop 4.25+ with Rosetta 2 emulation
-
-**Setup for M3 Pro:**
+## 7.4 Start training in cloud
 
 ```bash
-# 1. Enable MPS backend for PyTorch
-export PYTORCH_ENABLE_MPS_FALLBACK=1
-export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
+# generated by setup scripts
+~/train_supersvg.sh
 
-# 2. Build with platform specification
-docker build --platform linux/arm64 -f Dockerfile.mamba -t supersvg:latest .
+# optional custom params
+BATCH_SIZE=64 EPOCHS=200 ~/train_supersvg.sh
 
-# 3. Run with memory optimization
-docker run --rm -it \
-  --platform linux/arm64 \
-  -v /path/to/dataset:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  --memory=16g \
-  --memory-swap=20g \
-  supersvg:latest
+# monitor
+~/monitor_training.sh
 ```
 
-**Performance Results (M3 Pro):**
+---
 
-| Dataset                     | Batch Size | Time per Epoch | Total Training | Memory Usage |
-| --------------------------- | ---------- | -------------- | -------------- | ------------ |
-| **Quick Draw (1M samples)** | 32         | ~12-15 min     | ~8-10 hours    | ~12-14GB     |
-| **Icon Mix (30K samples)**  | 64         | ~2-3 min       | ~4-6 hours     | ~8-10GB      |
-| **Small Test (5K samples)** | 128        | ~15-30 sec     | ~30-45 min     | ~4-6GB       |
+## 8) Expose SuperSVG as a Deployable Service (Interface Agreement + APIs)
 
-**M3 Pro Optimization Tips:**
+The repository is training-oriented by default. For production serving, use a thin API service around the model pipeline.
 
-- Use `--memory=16g` to prevent swap usage
-- Set batch size to 32-64 for optimal performance
-- Enable unified memory sharing: `--shm-size=8g`
-- Monitor with: `docker stats` and Activity Monitor
+## 8.1 Service model
 
-#### 🔧 **Performance Optimization**
+Use asynchronous job-based inference:
 
-**Docker Optimization:**
+1. Client submits image + config
+2. Service enqueues job
+3. Worker runs vectorization pipeline
+4. Client polls or receives callback
+5. Client downloads SVG/result artifacts
 
-```bash
-# Allocate more memory to Docker Desktop
-# Settings > Resources > Memory: 20GB+ (for large datasets)
+## 8.2 API contract (proposed, implementation target)
 
-# Enable BuildKit for faster builds
-export DOCKER_BUILDKIT=1
+### Base
 
-# Use multi-stage builds for smaller images
-docker build --target production -t supersvg:optimized .
+- Base URL: `/api/v1`
+- Auth: `Authorization: Bearer <token>` (or internal mTLS)
+- Content type: `application/json` (upload endpoint uses `multipart/form-data`)
+
+### Endpoints
+
+#### Health
+
+- `GET /api/v1/health`
+- Response:
+
+```json
+{ "status": "ok", "version": "1.0.0" }
 ```
 
-**Training Optimization:**
-
-```bash
-# Mixed precision training (for NVIDIA GPUs)
-python main_coarse.py \
-  --data_path=/data \
-  --mixed_precision \
-  --batch_size=64
-
-# Data loading optimization
-python main_coarse.py \
-  --data_path=/data \
-  --num_workers=8 \
-  --prefetch_factor=4
-```
-
-#### 📊 **Cost-Performance Analysis**
-
-**Local vs Cloud Comparison (Icon dataset training):**
-
-| Option              | Hardware Cost | Time      | Electricity | Total Cost | Best For                    |
-| ------------------- | ------------- | --------- | ----------- | ---------- | --------------------------- |
-| **MacBook M3 Pro**  | $0 (owned)    | 6 hours   | ~$0.50      | ~$0.50     | Development, small datasets |
-| **Local RTX 4080**  | $0 (owned)    | 3 hours   | ~$1.00      | ~$1.00     | Regular training            |
-| **GCP V100**        | $0 setup      | 2 hours   | $0          | ~$6.00     | One-off experiments         |
-| **RunPod RTX 4090** | $0 setup      | 1.5 hours | $0          | ~$2.00     | Cost-effective cloud        |
-
-**Recommendation**: Start with local development on M3 Pro, then scale to cloud for production training.
-
-````markdown
-# SuperSVG: Superpixel-based Scalable Vector Graphics Synthesis
-
-### [Paper](https://openaccess.thecvf.com/content/CVPR2024/papers/Hu_SuperSVG_Superpixel-based_Scalable_Vector_Graphics_Synthesis_CVPR_2024_paper.pdf) | [Suppl](https://openaccess.thecvf.com/content/CVPR2024/supplemental/Hu_SuperSVG_Superpixel-based_Scalable_CVPR_2024_supplemental.pdf)
-
-<!-- <br> -->
-
-[Teng Hu](https://github.com/sjtuplayer),
-[Ran Yi](https://yiranran.github.io/),
-[Baihong Qian](https://github.com/CherryQBH),
-[Jiangning Zhang](https://zhangzjn.github.io/),
-[Paul L. Rosin](https://scholar.google.com/citations?hl=zh-CN&user=V5E7JXsAAAAJ),
-and [Yu-Kun Lai](https://scholar.google.com/citations?user=0i-Nzv0AAAAJ&hl=zh-CN&oi=sra)
-
-<!-- <br> -->
-
-![image](imgs/framework.jpg)
-
-# Setup
-
-We provide two ways to set up SuperSVG: **Docker (Recommended)** and **Local Installation**.
-
-## Option 1: Docker Setup (Recommended)
-
-The easiest way to get started is using Docker, which handles all dependencies automatically.
-
-### Prerequisites
-
-- [Docker](https://docs.docker.com/get-docker/) installed on your system
-- NVIDIA Docker runtime (for GPU support, optional)
-
-### Build the Docker Image
-
-```bash
-# Clone the repository
-git clone <repository-url>
-cd SuperSVG
-
-# Build the Docker image
-docker build -f Dockerfile.mamba -t supersvg:latest .
-```
-
-The build process will:
-
-- Set up a Python 3.7 environment with all required dependencies
-- Install PyTorch, DiffVG, and other necessary packages
-- Configure the environment for SuperSVG training
-
-### Docker Usage Examples
-
-#### 1. Basic Training with ImageNet Dataset
-
-```bash
-# Assuming your ImageNet dataset is in /path/to/imagenet
-docker run --rm -it \
-  -v /path/to/imagenet:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  supersvg:latest
-```
-
-#### 2. Interactive Development Mode
-
-```bash
-# Start an interactive session for development/debugging
-docker run --rm -it \
-  -v /path/to/your/dataset:/data \
-  -v $(pwd):/workspace \
-  --entrypoint bash \
-  supersvg:latest
-```
-
-#### 3. Custom Training Parameters
-
-```bash
-# Run with custom parameters
-docker run --rm -it \
-  -v /path/to/dataset:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  supersvg:latest \
-  micromamba run -n live python main_coarse.py \
-    --data_path=/data \
-    --batch_size=16 \
-    --num_epochs=100
-```
-
-#### 4. GPU Support (if available)
-
-```bash
-# For NVIDIA GPUs with docker runtime
-docker run --rm -it --gpus all \
-  -v /path/to/dataset:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  supersvg:latest
-```
-
-#### 5. Mount Multiple Directories
-
-```bash
-# Mount dataset, outputs, and checkpoints
-docker run --rm -it \
-  -v /path/to/dataset:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  -v $(pwd)/checkpoints:/workspace/checkpoints \
-  -v $(pwd)/logs:/workspace/logs \
-  supersvg:latest
-```
-
-#### 6. Run with Docker Compose (Alternative)
-
-Create a `docker-compose.yml` file:
-
-```yaml
-version: "3.8"
-services:
-  supersvg:
-    build:
-      context: .
-      dockerfile: Dockerfile.mamba
-    volumes:
-      - /path/to/your/dataset:/data
-      - ./output_coarse:/workspace/output_coarse
-      - ./logs:/workspace/logs
-    environment:
-      - CUDA_VISIBLE_DEVICES=0
-    command:
-      [
-        "micromamba",
-        "run",
-        "-n",
-        "live",
-        "python",
-        "main_coarse.py",
-        "--data_path=/data",
-      ]
-```
-
-Then run:
-
-```bash
-docker-compose up
-```
-
-### Docker Tips
-
-- **Data Persistence**: Always mount volumes for outputs (`output_coarse/`, `logs/`) to persist training results
-- **Performance**: For large datasets, ensure your Docker has sufficient memory allocated
-- **Development**: Use interactive mode (`-it --entrypoint bash`) for debugging and development
-- **Logs**: Monitor training progress with `docker logs <container_id>` if running in detached mode
-
-### Hardware Requirements & Performance
-
-#### 💻 **Local Hardware Recommendations**
-
-**Minimum Requirements:**
-
-- **CPU**: 4+ cores, 2.5GHz+ (Intel i5/AMD Ryzen 5 or equivalent)
-- **RAM**: 16GB+ (32GB recommended for large datasets)
-- **Storage**: 50GB+ free space for datasets and checkpoints
-- **GPU**: Optional but highly recommended (see GPU section below)
-
-**Recommended Hardware:**
-
-- **CPU**: 8+ cores, 3.0GHz+ (Intel i7/AMD Ryzen 7 or Apple M-series)
-- **RAM**: 32GB+ (64GB for production training)
-- **Storage**: 100GB+ SSD for fast I/O
-- **GPU**: NVIDIA RTX 3070/4070+ or Tesla V100+ with 8GB+ VRAM
-
-#### 🚀 **GPU Support & Performance**
-
-**NVIDIA GPUs (CUDA):**
-
-- **Entry Level**: RTX 3060 (12GB) - ~3-4x speedup over CPU
-- **Mid Range**: RTX 3070/4070 (8-12GB) - ~5-7x speedup
-- **High End**: RTX 3080/4080/4090 (16-24GB) - ~8-12x speedup
-- **Professional**: Tesla V100, A100 (16-80GB) - ~10-15x speedup
-
-**Apple Silicon (Metal Performance Shaders):**
-
-- **M1/M2**: Supported via PyTorch MPS backend - ~2-3x speedup
-- **M1/M2 Pro/Max**: Better performance with unified memory - ~3-4x speedup
-- **M3/M3 Pro/Max**: Latest optimizations - ~4-5x speedup
-
-#### ⏱️ **Training Time Expectations**
-
-Based on real-world testing across different hardware configurations:
-
-**Quick Draw Dataset (50M samples, 100 epochs):**
-
-| Hardware                               | Training Time | Notes                                    |
-| -------------------------------------- | ------------- | ---------------------------------------- |
-| **CPU Only** (Intel i7-12700K)         | ~5-7 days     | Not recommended for full dataset         |
-| **MacBook M3 Pro** (12-core, 18GB RAM) | ~2-3 days     | Excellent for development/small datasets |
-| **RTX 3070** (8GB VRAM)                | ~18-24 hours  | Good balance of cost/performance         |
-| **RTX 4080** (16GB VRAM)               | ~12-16 hours  | Recommended for serious training         |
-| **Tesla V100** (32GB VRAM)             | ~8-12 hours   | Cloud/enterprise option                  |
-| **A100** (80GB VRAM)                   | ~6-8 hours    | Fastest option, expensive                |
-
-**Icon Datasets (Combined: Feather + Tabler + TU-Berlin, ~30K samples, 200 epochs):**
-
-| Hardware             | Training Time | Cost Estimate |
-| -------------------- | ------------- | ------------- |
-| **MacBook M3 Pro**   | ~4-6 hours    | Free (local)  |
-| **RTX 3070**         | ~2-3 hours    | Free (local)  |
-| **Cloud GPU** (V100) | ~1-2 hours    | ~$2-4 USD     |
-| **Cloud GPU** (A100) | ~45-90 min    | ~$3-6 USD     |
-
-#### ☁️ **Cloud & IaaS Deployment**
-
-**Recommended Cloud Providers:**
-
-1. **Google Cloud Platform (GCP)**
-
-   ```bash
-   # Create VM with GPU support
-   gcloud compute instances create supersvg-training \
-     --zone=us-central1-a \
-     --machine-type=n1-standard-8 \
-     --accelerator=type=nvidia-tesla-v100,count=1 \
-     --image-family=pytorch-latest-gpu \
-     --image-project=deeplearning-platform-release \
-     --boot-disk-size=100GB \
-     --maintenance-policy=TERMINATE
-
-   # Install Docker and run SuperSVG
-   gcloud compute ssh supersvg-training
-   sudo docker run --rm --gpus all \
-     -v /data:/data \
-     -v /output:/workspace/output_coarse \
-     supersvg:latest
-   ```
-
-   **Cost**: ~$1.5-3/hour (V100), ~$2.5-5/hour (A100)
-
-2. **Amazon Web Services (AWS)**
-
-   ```bash
-   # Launch EC2 with Deep Learning AMI
-   aws ec2 run-instances \
-     --image-id ami-0c02fb55956c7d316 \
-     --instance-type p3.2xlarge \
-     --key-name your-key-pair \
-     --security-groups your-security-group
-
-   # SSH and run container
-   ssh -i your-key.pem ubuntu@instance-ip
-   docker run --rm --gpus all \
-     -v ~/data:/data \
-     -v ~/output:/workspace/output_coarse \
-     supersvg:latest
-   ```
-
-   **Cost**: ~$3-4/hour (p3.2xlarge with V100)
-
-3. **Paperspace Gradient**
-
-   ```bash
-   # Simple deployment with pre-built environment
-   gradient jobs create \
-     --container supersvg:latest \
-     --machineType V100 \
-     --command "python main_coarse.py --data_path=/data"
-   ```
-
-   **Cost**: ~$0.5-1.5/hour (depending on GPU tier)
-
-4. **RunPod**
-   ```bash
-   # Cost-effective GPU cloud option
-   # Use their web interface or API to deploy
-   # Template: PyTorch + CUDA
-   # Container: supersvg:latest
-   ```
-   **Cost**: ~$0.3-1/hour (RTX 3070-4090 range)
-
-#### 🖥️ **MacBook M3 Pro Example (Detailed)**
-
-**Test Configuration:**
-
-- **Model**: MacBook Pro 14" M3 Pro (2023)
-- **CPU**: 12-core (8 performance + 4 efficiency)
-- **GPU**: 18-core (Metal Performance Shaders)
-- **RAM**: 18GB unified memory
-- **Storage**: 1TB SSD
-- **OS**: macOS Sonoma 14.x
-- **Docker**: Docker Desktop 4.25+ with Rosetta 2 emulation
-
-**Setup for M3 Pro:**
-
-```bash
-# 1. Enable MPS backend for PyTorch
-export PYTORCH_ENABLE_MPS_FALLBACK=1
-export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
-
-# 2. Build with platform specification
-docker build --platform linux/arm64 -f Dockerfile.mamba -t supersvg:latest .
-
-# 3. Run with memory optimization
-docker run --rm -it \
-  --platform linux/arm64 \
-  -v /path/to/dataset:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  --memory=16g \
-  --memory-swap=20g \
-  supersvg:latest
-```
-
-**Performance Results (M3 Pro):**
-
-| Dataset                     | Batch Size | Time per Epoch | Total Training | Memory Usage |
-| --------------------------- | ---------- | -------------- | -------------- | ------------ |
-| **Quick Draw (1M samples)** | 32         | ~12-15 min     | ~8-10 hours    | ~12-14GB     |
-| **Icon Mix (30K samples)**  | 64         | ~2-3 min       | ~4-6 hours     | ~8-10GB      |
-| **Small Test (5K samples)** | 128        | ~15-30 sec     | ~30-45 min     | ~4-6GB       |
-
-**M3 Pro Optimization Tips:**
-
-- Use `--memory=16g` to prevent swap usage
-- Set batch size to 32-64 for optimal performance
-- Enable unified memory sharing: `--shm-size=8g`
-- Monitor with: `docker stats` and Activity Monitor
-
-#### 🔧 **Performance Optimization**
-
-**Docker Optimization:**
-
-```bash
-# Allocate more memory to Docker Desktop
-# Settings > Resources > Memory: 20GB+ (for large datasets)
-
-# Enable BuildKit for faster builds
-export DOCKER_BUILDKIT=1
-
-# Use multi-stage builds for smaller images
-docker build --target production -t supersvg:optimized .
-```
-
-**Training Optimization:**
-
-```bash
-# Mixed precision training (for NVIDIA GPUs)
-python main_coarse.py \
-  --data_path=/data \
-  --mixed_precision \
-  --batch_size=64
-
-# Data loading optimization
-python main_coarse.py \
-  --data_path=/data \
-  --num_workers=8 \
-  --prefetch_factor=4
-```
-
-#### 📊 **Cost-Performance Analysis**
-
-**Local vs Cloud Comparison (Icon dataset training):**
-
-| Option              | Hardware Cost | Time      | Electricity | Total Cost | Best For                    |
-| ------------------- | ------------- | --------- | ----------- | ---------- | --------------------------- |
-| **MacBook M3 Pro**  | $0 (owned)    | 6 hours   | ~$0.50      | ~$0.50     | Development, small datasets |
-| **Local RTX 4080**  | $0 (owned)    | 3 hours   | ~$1.00      | ~$1.00     | Regular training            |
-| **GCP V100**        | $0 setup      | 2 hours   | $0          | ~$6.00     | One-off experiments         |
-| **RunPod RTX 4090** | $0 setup      | 1.5 hours | $0          | ~$2.00     | Cost-effective cloud        |
-
-**Recommendation**: Start with local development on M3 Pro, then scale to cloud for production training.
-
-# Training
-
-## Data Preparation
-
-Download the [ImageNet](https://image-net.org) dataset or prepare your custom dataset.
-
-### Recommended Datasets for Icon/SVG Training
-
-If you want to train SuperSVG specifically for **image-to-SVG conversion** (especially for icons and simple graphics), here are the best free datasets based on community experience:
-
-#### 🎯 **Primary Datasets (Highly Recommended)**
-
-1. **[Quick, Draw! Dataset](https://github.com/googlecreativelab/quickdraw-dataset)** ⭐⭐⭐⭐⭐
-
-   - **Size**: 50 million drawings across 345 categories
-   - **Format**: Vector strokes with timing information, also available as simplified SVGs
-   - **Best for**: Simple icons, sketches, and basic shapes
-   - **Download**:
-     ```bash
-     # Simplified SVG format
-     gsutil -m cp 'gs://quickdraw_dataset/full/simplified/*.ndjson' .
-     ```
-   - **Why it's great**: Real human-drawn vectors, perfect for learning stroke patterns
-
-2. **[Sketchy-SVGs Dataset](https://huggingface.co/datasets/kmewhort/sketchy-svgs)** ⭐⭐⭐⭐
-
-   - **Size**: ~75k SVG icons with annotations
-   - **Format**: Pre-processed SVG files with metadata
-   - **Best for**: More complex icon shapes and detailed graphics
-   - **Download**: Available on Hugging Face
-   - **Why it's great**: High-quality SVG annotations of real-world objects
-
-3. **[TU-Berlin Sketch Dataset](https://cybertron.cg.tu-berlin.de/eitz/projects/classifysketch/)** ⭐⭐⭐⭐
-   - **Size**: 20,000 sketches across 250 categories
-   - **Format**: SVG and PNG formats available
-   - **Best for**: Object sketches and category-based training
-   - **Download**: [Direct link](https://cybertron.cg.tu-berlin.de/eitz/projects/classifysketch/sketches_svg.zip) (~50MB)
-   - **License**: Creative Commons Attribution 4.0
-
-#### 🎨 **Icon-Specific Datasets**
-
-4. **[Feather Icons](https://github.com/feathericons/feather)** ⭐⭐⭐⭐
-
-   - **Size**: 280+ icons
-   - **Format**: Clean SVG files
-   - **Best for**: Modern, minimalist icon style
-   - **License**: MIT
-
-   ```bash
-   git clone https://github.com/feathericons/feather.git
-   # Icons are in the 'icons/' directory
-   ```
-
-5. **[Tabler Icons](https://github.com/tabler/tabler-icons)** ⭐⭐⭐⭐
-
-   - **Size**: 5,944+ icons (outline + filled versions)
-   - **Format**: High-quality SVG files
-   - **Best for**: Comprehensive icon training
-   - **License**: MIT
-
-   ```bash
-   git clone https://github.com/tabler/tabler-icons.git
-   # Icons are in the 'icons/' directory
-   ```
-
-6. **[Iconify Collection](https://iconify.design/)** ⭐⭐⭐⭐⭐
-   - **Size**: 200,000+ open source icons
-   - **Format**: SVG with JSON metadata
-   - **Best for**: Massive variety of icon styles
-   - **Access**: Use their API or download specific icon sets
-
-#### 🔬 **Research Datasets**
-
-7. **[DeepSVG Icons8 Dataset](https://github.com/alexandre01/deepsvg)** ⭐⭐⭐
-
-   - **Size**: 100k preprocessed icons
-   - **Format**: PyTorch tensors (pre-processed)
-   - **Best for**: Following DeepSVG methodology
-   - **Note**: Requires downloading from Google Drive
-
-8. **[SVG-VAE Font Dataset](https://github.com/magenta/magenta/tree/master/magenta/models/svg_vae)** ⭐⭐⭐
-   - **Size**: Various font characters as SVGs
-   - **Format**: Vector fonts converted to SVG paths
-   - **Best for**: Character/glyph generation
-
-#### 📊 **Dataset Combination Strategy**
-
-For best results, we recommend combining multiple datasets:
-
-```bash
-# 1. Start with Quick Draw for basic shapes
-gsutil -m cp 'gs://quickdraw_dataset/full/simplified/*.ndjson' ./data/quickdraw/
-
-# 2. Add icon datasets for style diversity
-git clone https://github.com/feathericons/feather.git ./data/feather/
-git clone https://github.com/tabler/tabler-icons.git ./data/tabler/
-
-# 3. Include Sketchy-SVGs for complex objects
-# Download from Hugging Face to ./data/sketchy/
-
-# 4. Mix with a subset of ImageNet for raster-to-vector learning
-# Download ImageNet subset to ./data/imagenet/
-```
-
-#### 🛠 **Dataset Preprocessing Tips**
-
-1. **SVG Simplification**: Use tools like `svgo` to clean SVG files
-2. **Size Normalization**: Scale all SVGs to consistent bounding boxes
-3. **Data Augmentation**: Apply rotations, scaling, and translations
-4. **Format Conversion**: Convert different vector formats to a unified representation
-
-#### 🎯 **Training Recommendations**
-
-- **Start Small**: Begin with Quick Draw dataset (simpler shapes)
-- **Progressive Training**: Add more complex datasets gradually
-- **Style Mixing**: Combine multiple icon styles for robustness
-- **Validation Split**: Keep 10-20% of each dataset for validation
-
-#### 💡 **Community Experience**
-
-Based on developer feedback:
-
-- Quick Draw works best for learning basic vector primitives
-- Icon datasets (Feather, Tabler) help with clean, professional results
-- Mixing raster images with vector targets improves generalization
-- Pre-trained models on fonts can be fine-tuned for icons
-
-## Checkpoints
-
-Currently we are working on an improved version of SuperSVG and the complete code will be released after that project.
-If you want to reproduce the results in the paper, you can download the [checkpoints](https://drive.google.com/file/d/10C9EsMD6_B7dCEz6oNJetevNazk3blBK/view?usp=drive_link) of our improved coarse-stage model,
-which performs almost the same as the coarse+refine model in the paper.
-
-## Training the Coarse-stage Model
-
-### Using Docker (Recommended)
-
-```bash
-# Basic training with mounted dataset and output directory
-docker run --rm -it \
-  -v /path/to/your/dataset:/data \
-  -v $(pwd)/output_coarse:/workspace/output_coarse \
-  supersvg:latest
-```
-
-### Using Local Installation
-
-Put the downloaded ImageNet or any dataset you want into `$path_to_the_dataset`.
-Then, you can train the coarse-stage model by running:
-
-```bash
-python3 main_coarse.py --data_path=$path_to_the_dataset
-```
-
-After training, the checkpoints and logs are saved in the directory `output_coarse`.
-
-## Training the Refinement-stage Model
-
-Coming soon
-
-[//]: # "With the trained coarse-stage model, you can train the refinement-stage model by running:"
-[//]: #
-[//]: # "```"
-[//]: # "python3 main_refine --data_path=$path_to_the_dataset"
-[//]: # "```"
-[//]: #
-[//]: # "After training, the checkpoints and logs are saved in the directory `output_refine`."
-
-# Troubleshooting
-
-## Docker Issues
-
-- **Permission Errors**: Ensure your user has permission to access the mounted directories
-- **Out of Memory**: Increase Docker's memory allocation in Docker Desktop settings (recommended: 20GB+ for large datasets)
-- **Build Failures**: Try building with `--no-cache` flag: `docker build --no-cache -f Dockerfile.mamba -t supersvg:latest .`
-- **Apple Silicon Issues**: Use `--platform linux/arm64` flag and ensure Rosetta 2 is enabled
-- **GPU Not Detected**: Install NVIDIA Container Toolkit for Linux or enable GPU support in Docker Desktop
-
-## Performance Issues
-
-- **Slow Training**: Check if GPU is being utilized with `nvidia-smi` (NVIDIA) or Activity Monitor (Apple Silicon)
-- **Memory Errors**: Reduce batch size or increase Docker memory allocation
-- **Disk I/O Bottleneck**: Use SSD storage and avoid network-mounted datasets
-- **CPU Bottleneck**: Increase `--num_workers` for data loading (typically 2x number of CPU cores)
-
-## Local Installation Issues
-
-- **DiffVG Build Errors**: Ensure you have CMake 3.15+ installed and initialized git submodules
-- **OpenCV Segmentation Fault**: Use exactly `opencv-python==4.5.4.60` as specified
-- **CUDA Issues**: Ensure your PyTorch installation matches your CUDA version
-
-# Repository Structure
-
-```
-SuperSVG/
-├── Dockerfile.mamba          # Docker configuration for containerized setup
-├── docker-compose.yml        # Optional Docker Compose configuration
-├── main_coarse.py            # Main training script for coarse-stage model
-├── DiffVG/                   # DiffVG submodule for differentiable rendering
-├── models/                   # Model implementations
-├── util/                     # Utility functions and helpers
-├── output_coarse/           # Training outputs (created during training)
-├── logs/                    # Training logs (created during training)
-└── README.md                # This file
-```
-
-## Citation
-
-If you find this code helpful for your research, please cite:
-
-```
-@inproceedings{hu2024supersvg,
-      title={SuperSVG: Superpixel-based Scalable Vector Graphics Synthesis},
-      author={Teng Hu and Ran Yi and Baihong Qian and Jiangning Zhang and Paul L. Rosin and Yu-Kun Lai},
-      booktitle={Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition},
-      year={2024}
+#### Submit job
+
+- `POST /api/v1/vectorize/jobs`
+- Request (multipart):
+  - `image` (required): jpg/png
+  - `config` (optional JSON string)
+- Example config:
+
+```json
+{
+  "max_paths": 256,
+  "num_iterations": 300,
+  "output_format": "svg",
+  "priority": "normal",
+  "callback_url": "https://client.example/webhook"
 }
 ```
-````
+
+- Response `202 Accepted`:
+
+```json
+{
+  "job_id": "job_01J...",
+  "status": "queued",
+  "created_at": "2026-02-28T12:00:00Z"
+}
+```
+
+#### Get job status
+
+- `GET /api/v1/vectorize/jobs/{job_id}`
+- Response:
+
+```json
+{
+  "job_id": "job_01J...",
+  "status": "running",
+  "progress": 42,
+  "created_at": "2026-02-28T12:00:00Z",
+  "started_at": "2026-02-28T12:00:15Z",
+  "finished_at": null,
+  "error": null
+}
+```
+
+#### Get job result
+
+- `GET /api/v1/vectorize/jobs/{job_id}/result`
+- Response when complete:
+
+```json
+{
+  "job_id": "job_01J...",
+  "status": "completed",
+  "result": {
+    "svg_url": "https://storage.example/results/job_01J/output.svg",
+    "preview_png_url": "https://storage.example/results/job_01J/preview.png",
+    "metrics": {
+      "num_paths": 187,
+      "duration_sec": 48.2
+    }
+  }
+}
+```
+
+#### Cancel job
+
+- `POST /api/v1/vectorize/jobs/{job_id}/cancel`
+- Response:
+
+```json
+{ "job_id": "job_01J...", "status": "cancelling" }
+```
+
+## 8.3 Error model
+
+Standard error payload:
+
+```json
+{
+  "error": {
+    "code": "INVALID_ARGUMENT",
+    "message": "output_format must be one of: svg",
+    "details": {}
+  }
+}
+```
+
+Suggested status mapping:
+
+- `400` invalid request
+- `401/403` auth/permission
+- `404` job not found
+- `409` invalid state transition
+- `422` unsupported media/config
+- `429` rate limit
+- `500` internal
+- `503` capacity unavailable
+
+## 8.4 Non-functional API requirements
+
+- Idempotency header on submit: `Idempotency-Key`
+- Correlation ID header: `X-Request-Id`
+- Max upload size (example): 25 MB
+- Job retention (example): 7 days
+- SLA target (example): P95 status API < 200 ms
+
+## 8.5 Deployment architecture (reference)
+
+- API gateway / ingress
+- FastAPI (or equivalent) control plane
+- Queue (Redis/RQ, RabbitMQ, or cloud queue)
+- Worker pool with GPU scheduling
+- Object storage for artifacts
+- PostgreSQL for job metadata
+- Observability: logs + metrics + tracing
+
+## 8.6 Security baseline
+
+- Token-based auth or private network only
+- Signed URLs for result download
+- Input validation + file type checks
+- Per-tenant quotas and rate limits
+- Secret management via cloud secret manager
+
+## 8.7 Versioning policy
+
+- URI-based versioning (`/api/v1`)
+- Backward-compatible additions only within major version
+- Breaking changes in `/api/v2`
+
+---
+
+## Appendices
+
+### A) Most-used commands
+
+```bash
+./setup_dataset_env.sh
+./docker-run.sh download test
+./docker-run.sh build
+./docker-run.sh test ./input 16
+./docker-run.sh train ./input 100 32 0.001
+```
+
+### B) Key repository scripts
+
+- `docker-run.sh`
+- `download_datasets.sh`
+- `setup_dataset_env.sh`
+- `setup-lambda-labs.sh`
+- `setup-aws-ec2.sh`
+- `choose-platform.sh`
+
+### C) Cloud-first recommendation
+
+For Apple Silicon users: use local environment for preparation, and run full training/inference workloads on cloud AMD64 GPU infrastructure.
