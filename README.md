@@ -366,32 +366,38 @@ Use these to track your journey from "does it run" to "production-ready":
 **On RunPod, from pod boot to first checkpoint in ~15-20 minutes**:
 
 ```bash
-# 1. SSH into your running pod (RunPod provides the command)
+# 1. SSH into your running pod (from your local machine)
+ssh root@<POD_IP> -p <POD_PORT> -i ~/.ssh/id_runpod_ed25519
 
-# 2. Clone repo and setup
-git clone https://github.com/sjtuplayer/SuperSVG.git
+# 2. On the pod: Set up GitHub SSH auth (one time)
+ssh-keygen -t ed25519 -f ~/.ssh/id_github -C "supersvg-pod" -N ""
+cat ~/.ssh/id_github.pub
+# Copy output, add to https://github.com/settings/keys
+
+# 3. Clone repo and setup (adjust repo URL if public)
+git clone git@github.com:ifthenelse/SuperSVG.git
 cd SuperSVG
 ./setup-lambda-labs.sh  # automates Docker build, dependencies
 
-# 3. Download tiny test dataset (if not pre-mounted)
+# 4. Download tiny test dataset (if not pre-mounted)
 ./docker-run.sh download test ./input
 
-# 4. Run 1-epoch smoke training
+# 5. Run 1-epoch smoke training
 ./docker-run.sh test ./input 16
 
-# 5. Check for artifacts
+# 6. Check for artifacts
 ls output_coarse/        # SVG outputs
 ls checkpoints/          # model checkpoint
 ls logs/                 # training logs
 
-# 6. Backup to persistent storage
+# 7. Backup to persistent storage
 # Option A: Network Volume
 cp -r output_coarse/* /workspace/my_network_volume/
 
 # Option B: S3 (requires AWS credentials on pod)
 aws s3 sync output_coarse/ s3://my-bucket/supersvg-outputs/
 
-# 7. Terminate pod to stop charges
+# 8. Terminate pod to stop charges
 # Go to RunPod UI and click "Stop" or "Terminate"
 ```
 
@@ -444,19 +450,69 @@ Cost numbers below are indicative and vary by region/availability.
 
 ## 8.1 RunPod / Vast.ai / Lambda-style flow
 
+### Step 1: Connect to your pod
+
+**Option A (Easiest): Use TCP port forwarding**
+
 ```bash
-# On cloud VM/pod
-curl -O https://raw.githubusercontent.com/sjtuplayer/SuperSVG/master/setup-lambda-labs.sh
-chmod +x setup-lambda-labs.sh
+# From your local machine
+ssh root@<POD_PUBLIC_IP> -p <POD_PORT> -i ~/.ssh/id_runpod_ed25519
+```
+
+Replace `<POD_PUBLIC_IP>` and `<POD_PORT>` with values from RunPod pod console.
+
+**Troubleshooting SSH:**
+
+- If public key auth fails, use password auth instead:
+
+  ```bash
+  ssh root@<POD_PUBLIC_IP> -p <POD_PORT>
+  ```
+
+  (Enter root password from RunPod pod console)
+
+- If you have VPN enabled, **disable it first** — VPN blocks SSH port forwarding
+- If port is unreachable, regenerate keypair from RunPod console: **SSH Keypair** → **Regenerate** → download new private key
+
+**Option B: Use RunPod SSH gateway**
+
+```bash
+ssh <POD_ID>-<USER_ID>@ssh.runpod.io -i ~/.ssh/id_runpod_ed25519
+```
+
+(Find exact command in RunPod pod console under "SSH Connection")
+
+### Step 2: Set up GitHub SSH authentication
+
+If you're cloning a **private repo**, generate SSH credentials on the pod and add to GitHub:
+
+```bash
+# On the pod
+ssh-keygen -t ed25519 -f ~/.ssh/id_github -C "supersvg-pod" -N ""
+cat ~/.ssh/id_github.pub
+```
+
+Then:
+
+1. Copy the output (public key)
+2. Go to https://github.com/settings/keys
+3. Click "New SSH key"
+4. Paste the public key, name it "SuperSVG Pod", and save
+
+### Step 3: Clone and build
+
+```bash
+# On pod
+git clone git@github.com:ifthenelse/SuperSVG.git
+cd SuperSVG
 ./setup-lambda-labs.sh
 ```
 
-This script automates:
+The `setup-lambda-labs.sh` script automates:
 
 - system packages
 - NVIDIA/container runtime checks
 - Docker setup
-- repo clone
 - image build
 - launcher scripts (`~/train_supersvg.sh`, `~/monitor_training.sh`)
 
