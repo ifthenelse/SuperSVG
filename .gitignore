@@ -288,3 +288,7 @@ BUILD/
 # Exported Docker images
 *.tar
 *.tar.gz
+
+# AWS keys
+*.pem
+*.key
