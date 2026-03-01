@@ -439,6 +439,38 @@ aws ec2 describe-instances --instance-ids i-xxxxxxxxxxxxx \
   --output text
 ```
 
+## 7.6 RunPod storage strategy (Do you need a Network Volume?)
+
+Short answer: **recommended, but not strictly required**.
+
+Choose based on desired durability:
+
+- **No Network Volume (fast start, lowest complexity):**
+  - Use container/volume disk only
+  - Data is lost when pod is terminated
+  - Best for short experiments where outputs are pushed to external storage immediately
+- **With Network Volume (recommended for most users):**
+  - Data persists across pod termination/recreation
+  - Better for iterative training, checkpoint recovery, and dataset reuse
+  - Network Volume is locked to a RunPod region/data center
+
+Recommended baseline for SuperSVG:
+
+- GPU: A5000 on-demand for first stable runs
+- Container disk: 20-30 GB
+- Network Volume: 100-150 GB
+- Jupyter: off unless needed for exploratory analysis
+
+RunPod region matching rule:
+
+- The pod and Network Volume must be in the same compatible data center/region.
+- If you see "Data center does not match filters", adjust GPU/data-center filters or create the volume in the selected pod region.
+
+Durability best practice:
+
+- Keep active training state on Network Volume
+- Periodically export checkpoints/results to object storage (for example AWS S3) as system-of-record backups
+
 ---
 
 ## 8) Expose SuperSVG as a Deployable Service (Interface Agreement + APIs)
@@ -604,6 +636,56 @@ Suggested status mapping:
 - URI-based versioning (`/api/v1`)
 - Backward-compatible additions only within major version
 - Breaking changes in `/api/v2`
+
+## 8.8 AWS serverless HTTP deployment pattern (recommended)
+
+For production APIs, use a **serverless control plane** and a **GPU worker plane**:
+
+- **Control plane (serverless):**
+  - API Gateway + Lambda for HTTP endpoints and orchestration
+  - SQS for async job queueing
+  - DynamoDB (or PostgreSQL) for job status/metadata
+  - S3 for input/output artifacts
+- **Worker plane (GPU):**
+  - ECS on EC2 GPU instances, EKS GPU nodes, or SageMaker async endpoints
+  - Pull jobs from queue, run inference, write artifacts/metadata back
+
+Important constraint:
+
+- AWS Lambda is excellent for API orchestration and lightweight preprocessing.
+- Lambda is **not** suitable for heavy GPU inference/training workloads.
+
+Reference request flow:
+
+1. `POST /api/v1/vectorize/jobs` uploads input to S3 and enqueues job in SQS
+2. GPU worker consumes job, runs vectorization, writes `output.svg` to S3
+3. Worker updates job state in DynamoDB/PostgreSQL
+4. `GET /api/v1/vectorize/jobs/{job_id}` returns progress/status
+5. `GET /api/v1/vectorize/jobs/{job_id}/result` returns signed S3 URL
+
+## 8.9 Practical E2E migration path (RunPod → AWS service)
+
+Phase 1: model development and training
+
+- Train/tune on RunPod (A5000) with persistent storage
+- Save checkpoints and export final artifacts to S3
+
+Phase 2: inference packaging and local validation
+
+- Build an inference container with a deterministic `/predict` contract
+- Validate locally with fixed test inputs and expected outputs
+
+Phase 3: production API enablement
+
+- Implement async API contract from this section
+- Deploy API Gateway + Lambda + SQS + DynamoDB + S3
+- Deploy GPU worker service (ECS/EKS/SageMaker)
+
+Phase 4: hardening and operations
+
+- Add authentication, rate limiting, and structured logging
+- Add metrics/alerts, retries, DLQ, and idempotency controls
+- Define SLOs, run load tests, and establish rollback procedures
 
 ---
 
