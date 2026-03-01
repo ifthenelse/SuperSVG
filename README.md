@@ -268,7 +268,152 @@ Use absolute Windows path in Docker Desktop shared drives context.
 
 ---
 
-## 6) Cloud Setup Options (Platforms, Tradeoffs, Costs)
+## 6) Key Concepts: Training vs. Serving, Milestones & Cost
+
+### 6.1 Training as artifact generation, not an API
+
+SuperSVG training produces:
+
+- **Checkpoint files** (model weights saved at regular intervals)
+- **Logs** (training metrics, loss curves)
+- **Sample SVG outputs** (vectorization results on fixed test inputs)
+
+Training **does not** produce an HTTP API. Serving (inference) is a separate phase: load a checkpoint, run the vectorization pipeline on new inputs at request time, and return SVG results.
+
+### 6.2 Separate compute from state
+
+Best practice architecture:
+
+- **Ephemeral compute** (RunPod pod, EC2 instance, ECS task): Stateless, disposable, pay-per-hour.
+- **Persistent storage** (Network Volume, S3/R2): Datasets, checkpoints, outputs, logs. Pay-per-GB-month.
+- **Rule**: Treat pod disk as temporary cache only. Do not rely on it for long-term data. Sync artifacts to persistent storage immediately.
+
+Why this matters:
+
+- RunPod stopped pod disks still incur storage costs.
+- EC2 EBS snapshots are expensive if kept long-term.
+- Relying on pod disk forces you to keep pods running (expensive and wasteful).
+
+### 6.3 Hardware constraints by OS
+
+| OS               | Local training/inference                                               | Control-plane / API dev                                    |
+| ---------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Mac M3 Pro (ARM) | Slow/unreliable under amd64 emulation; not recommended. Use cloud GPU. | ✅ Excellent; build here. Standard Python/FastAPI/web dev. |
+| Linux x86-64     | ✅ Excellent if GPU available (not typical for dev machines).          | ✅ Excellent.                                              |
+| Windows x86-64   | ✅ Good via Docker Desktop + WSL2.                                     | ✅ Excellent.                                              |
+
+**Practical split for Mac users**:
+
+- Build and develop the **control-plane** (API, orchestration, validation logic) locally.
+- Run all **GPU workloads** (training, inference) on RunPod/cloud.
+
+### 6.4 Milestones: progress gates and success criteria
+
+Use these to track your journey from "does it run" to "production-ready":
+
+#### Milestone 1: Pipeline Valid
+
+- ✅ Training doesn't crash
+- ✅ Produces ≥1 checkpoint file
+- ✅ Produces ≥1 SVG output (even if simple)
+- ✅ Completes without OOM or timeouts
+
+**How to reach**: Run 1 epoch on the test dataset (~5 images) with default hyperparams.
+
+#### Milestone 2: Non-degenerate Output
+
+- ✅ SVG output is not empty/garbage
+- ✅ No major glitches or exploding gradients
+- ✅ Training curves show reasonable trends
+- ✅ Inference runs without errors on sample images
+
+**How to reach**: Quick dataset (quickdraw 100 images) + 5-10 epochs, monitor convergence.
+
+#### Milestone 3: Publishable Stability & Quality
+
+- ✅ Quality plateaus or improves consistently
+- ✅ Costs and throughput measured and reproducible
+- ✅ Checkpoint versioning + git/S3 tracking
+- ✅ Regression tests in place (golden image comparisons)
+- ✅ API contract defined and validated
+
+**How to reach**: Full training run (50-100 epochs) + production hardening.
+
+### 6.5 Cost framing with concrete A5000 numbers
+
+**RunPod A5000 on-demand pricing**:
+
+- GPU cost: `~$0.27/h`
+- Running pod disk: `~$0.025/h`
+- **Total running**: `~$0.295/h`
+
+**Budget scenarios**:
+
+- 10 hours training: **~$3**
+- 50 hours training: **~$15**
+- 100 hours training: **~$30**
+
+**Cost leak prevention**:
+
+- ❌ Don't leave pods running idle (suspend or terminate after use)
+- ❌ Don't keep large pod disks around after termination (expensive storage)
+- ✅ Use Network Volumes (cheaper monthly storage)
+- ✅ Push artifacts to S3/R2 regularly
+- ✅ Automate pod teardown after training completes
+
+### 6.6 Fastest path to Milestone 1 (minimize variables, cost, time)
+
+**On RunPod, from pod boot to first checkpoint in ~15-20 minutes**:
+
+```bash
+# 1. SSH into your running pod (RunPod provides the command)
+
+# 2. Clone repo and setup
+git clone https://github.com/sjtuplayer/SuperSVG.git
+cd SuperSVG
+./setup-lambda-labs.sh  # automates Docker build, dependencies
+
+# 3. Download tiny test dataset (if not pre-mounted)
+./docker-run.sh download test ./input
+
+# 4. Run 1-epoch smoke training
+./docker-run.sh test ./input 16
+
+# 5. Check for artifacts
+ls output_coarse/        # SVG outputs
+ls checkpoints/          # model checkpoint
+ls logs/                 # training logs
+
+# 6. Backup to persistent storage
+# Option A: Network Volume
+cp -r output_coarse/* /workspace/my_network_volume/
+
+# Option B: S3 (requires AWS credentials on pod)
+aws s3 sync output_coarse/ s3://my-bucket/supersvg-outputs/
+
+# 7. Terminate pod to stop charges
+# Go to RunPod UI and click "Stop" or "Terminate"
+```
+
+**Success = artifacts exist at expected paths.**
+
+### 6.7 On-demand vs in-house decision
+
+| Aspect                     | On-demand (RunPod)                               | In-house GPU                                         |
+| -------------------------- | ------------------------------------------------ | ---------------------------------------------------- |
+| **Time to first run**      | ~5 min (sign up) + pod deploy                    | Weeks (procurement, setup)                           |
+| **Capital**                | $0                                               | $5k-$20k+                                            |
+| **Ops overhead**           | Minimal                                          | High (cooling, power, CUDA, drivers)                 |
+| **Hourly cost**            | $0.27 (A5000)                                    | ~$0.02 (amortized), but high upfront                 |
+| **Total cost Milestone 1** | ~$3-5                                            | $5k+, then cheap after                               |
+| **Utilization break-even** | ~$5k / $0.27 ≈ 18,500h of use                    | n/a                                                  |
+| **Best for**               | Prototyping, validation, startups, variable load | High utilization, established teams, long-term infra |
+
+**Recommendation**: Use on-demand for Milestones 1-2. Decide in-house only if you'll consistently use GPU many hours/month for years.
+
+---
+
+## 7) Cloud Setup Options (Platforms, Tradeoffs, Costs)
 
 Cost numbers below are indicative and vary by region/availability.
 
@@ -280,7 +425,7 @@ Cost numbers below are indicative and vary by region/availability.
 | Lambda Labs       | A100 / A6000     |         ~$0.80-1.99 | Good GPU options          | Frequent capacity limits  | If available         |
 | GCP (preemptible) | V100 / A100      |            variable | Strong infra              | Pricing/config complexity | GCP-native teams     |
 
-### Training budget examples
+### Training budget examples (estimating Milestone 1-3 iterations)
 
 - Icon dataset runs (2-3h): roughly ~$1-$4 depending platform/GPU.
 - Quick Draw-scale runs (10-15h): roughly ~$4-$20 depending platform/GPU.
@@ -295,9 +440,9 @@ Cost numbers below are indicative and vary by region/availability.
 
 ---
 
-## 7) Install & Run on Cloud Infrastructure
+## 8) Install & Run on Cloud Infrastructure
 
-## 7.1 RunPod / Vast.ai / Lambda-style flow
+## 8.1 RunPod / Vast.ai / Lambda-style flow
 
 ```bash
 # On cloud VM/pod
@@ -315,9 +460,9 @@ This script automates:
 - image build
 - launcher scripts (`~/train_supersvg.sh`, `~/monitor_training.sh`)
 
-## 7.2 AWS EC2 flow
+## 8.2 AWS EC2 flow
 
-### Prerequisites
+### Prerequisites (quota approval needed)
 
 Before launching GPU instances, you need sufficient vCPU quota:
 
@@ -391,7 +536,7 @@ The setup script (runs on the EC2 instance) automates:
 - Spot-instance handling helpers
 - Cost estimation scripts
 
-## 7.3 Dataset transfer to cloud
+## 8.3 Dataset transfer to cloud
 
 ### Option A: from local machine
 
@@ -406,7 +551,7 @@ cd ~/supersvg_data
 # Download or copy from object storage
 ```
 
-## 7.4 Start training in cloud
+## 8.4 Start training in cloud
 
 ```bash
 # generated by setup scripts
@@ -419,7 +564,7 @@ BATCH_SIZE=64 EPOCHS=200 ~/train_supersvg.sh
 ~/monitor_training.sh
 ```
 
-## 7.5 Terminate instance when done
+## 8.5 Terminate instance when done
 
 **Important:** Remember to terminate instances to avoid ongoing charges.
 
@@ -439,7 +584,7 @@ aws ec2 describe-instances --instance-ids i-xxxxxxxxxxxxx \
   --output text
 ```
 
-## 7.6 RunPod storage strategy (Do you need a Network Volume?)
+## 8.6 RunPod storage strategy (Do you need a Network Volume?)
 
 Short answer: **recommended, but not strictly required**.
 
@@ -473,11 +618,11 @@ Durability best practice:
 
 ---
 
-## 8) Expose SuperSVG as a Deployable Service (Interface Agreement + APIs)
+## 9) Expose SuperSVG as a Deployable Service (Interface Agreement + APIs)
 
 The repository is training-oriented by default. For production serving, use a thin API service around the model pipeline.
 
-## 8.1 Service model
+## 9.1 Service model
 
 Use asynchronous job-based inference:
 
@@ -487,7 +632,7 @@ Use asynchronous job-based inference:
 4. Client polls or receives callback
 5. Client downloads SVG/result artifacts
 
-## 8.2 API contract (proposed, implementation target)
+## 9.2 API contract (proposed, implementation target)
 
 ### Base
 
@@ -580,7 +725,7 @@ Use asynchronous job-based inference:
 { "job_id": "job_01J...", "status": "cancelling" }
 ```
 
-## 8.3 Error model
+## 9.3 Error model
 
 Standard error payload:
 
@@ -605,7 +750,7 @@ Suggested status mapping:
 - `500` internal
 - `503` capacity unavailable
 
-## 8.4 Non-functional API requirements
+## 9.4 Non-functional API requirements
 
 - Idempotency header on submit: `Idempotency-Key`
 - Correlation ID header: `X-Request-Id`
@@ -613,7 +758,7 @@ Suggested status mapping:
 - Job retention (example): 7 days
 - SLA target (example): P95 status API < 200 ms
 
-## 8.5 Deployment architecture (reference)
+## 9.5 Deployment architecture (reference)
 
 - API gateway / ingress
 - FastAPI (or equivalent) control plane
@@ -623,7 +768,7 @@ Suggested status mapping:
 - PostgreSQL for job metadata
 - Observability: logs + metrics + tracing
 
-## 8.6 Security baseline
+## 9.6 Security baseline
 
 - Token-based auth or private network only
 - Signed URLs for result download
@@ -631,13 +776,13 @@ Suggested status mapping:
 - Per-tenant quotas and rate limits
 - Secret management via cloud secret manager
 
-## 8.7 Versioning policy
+## 9.7 Versioning policy
 
 - URI-based versioning (`/api/v1`)
 - Backward-compatible additions only within major version
 - Breaking changes in `/api/v2`
 
-## 8.8 AWS serverless HTTP deployment pattern (recommended)
+## 9.8 AWS serverless HTTP deployment pattern (recommended)
 
 For production APIs, use a **serverless control plane** and a **GPU worker plane**:
 
@@ -663,7 +808,7 @@ Reference request flow:
 4. `GET /api/v1/vectorize/jobs/{job_id}` returns progress/status
 5. `GET /api/v1/vectorize/jobs/{job_id}/result` returns signed S3 URL
 
-## 8.9 Practical E2E migration path (RunPod → AWS service)
+## 9.9 Practical E2E migration path (RunPod → AWS service)
 
 Phase 1: model development and training
 
