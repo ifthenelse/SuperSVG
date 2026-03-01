@@ -317,17 +317,79 @@ This script automates:
 
 ## 7.2 AWS EC2 flow
 
+### Prerequisites
+
+Before launching GPU instances, you need sufficient vCPU quota:
+
+1. **Check your quota:**
+
+   ```bash
+   aws service-quotas get-service-quota \
+     --service-code ec2 \
+     --quota-code L-DB2E81BA  # Running On-Demand G and VT instances
+   ```
+
+2. **Request increase if needed:**
+   - Via AWS Console: [Service Quotas](https://console.aws.amazon.com/servicequotas/home) → EC2 → "Running On-Demand G and VT instances"
+   - Request at least 32 vCPUs (g5.2xlarge needs 8)
+   - Approval typically takes 1-2 business days
+
+   Or via CLI:
+
+   ```bash
+   aws service-quotas request-service-quota-increase \
+     --service-code ec2 \
+     --quota-code L-DB2E81BA \
+     --desired-value 32
+   ```
+
+### Launch instance from local machine
+
+Use the automated launcher script (recommended):
+
 ```bash
+# On-demand instance (reliable, ~$1.21/hour)
+./launch-aws-ec2.sh
+
+# Spot instance (70% cheaper, ~$0.36-0.50/hour, can be interrupted)
+./launch-aws-ec2.sh --spot
+
+# Different instance type
+./launch-aws-ec2.sh --instance-type g5.xlarge
+```
+
+The script automatically:
+
+- Finds the correct Ubuntu 22.04 AMI for your region
+- Creates SSH key pair (`supersvg-key.pem`) if needed
+- Sets up security group for SSH access
+- Launches the instance
+- Provides SSH connection details
+
+### Setup on the EC2 instance
+
+Once the instance is running, SSH in and run the setup script:
+
+```bash
+# SSH into instance (command provided by launch script)
+ssh -i supersvg-key.pem ubuntu@<PUBLIC_IP>
+
+# Run setup script on the instance
 curl -O https://raw.githubusercontent.com/sjtuplayer/SuperSVG/master/setup-aws-ec2.sh
 chmod +x setup-aws-ec2.sh
 ./setup-aws-ec2.sh
 ```
 
-AWS script additionally supports:
+The setup script (runs on the EC2 instance) automates:
 
+- NVIDIA driver installation
+- Docker + NVIDIA container runtime setup
+- Repository clone
+- Image build
+- Launcher scripts (`~/train_supersvg.sh`, `~/monitor_training.sh`)
 - S3 sync helpers
-- spot-instance handling helpers
-- monitoring/cost estimation scripts
+- Spot-instance handling helpers
+- Cost estimation scripts
 
 ## 7.3 Dataset transfer to cloud
 
@@ -353,8 +415,28 @@ cd ~/supersvg_data
 # optional custom params
 BATCH_SIZE=64 EPOCHS=200 ~/train_supersvg.sh
 
-# monitor
+# monitor (in another SSH session)
 ~/monitor_training.sh
+```
+
+## 7.5 Terminate instance when done
+
+**Important:** Remember to terminate instances to avoid ongoing charges.
+
+```bash
+# From your local machine
+aws ec2 terminate-instances --instance-ids i-xxxxxxxxxxxxx
+
+# Or use the instance ID saved by launch script
+cat supersvg-instance.txt  # shows terminate command
+```
+
+Check termination status:
+
+```bash
+aws ec2 describe-instances --instance-ids i-xxxxxxxxxxxxx \
+  --query 'Reservations[0].Instances[0].State.Name' \
+  --output text
 ```
 
 ---
@@ -539,12 +621,13 @@ Suggested status mapping:
 
 ### B) Key repository scripts
 
-- `docker-run.sh`
-- `download_datasets.sh`
-- `setup_dataset_env.sh`
-- `setup-lambda-labs.sh`
-- `setup-aws-ec2.sh`
-- `choose-platform.sh`
+- `docker-run.sh`: local Docker operations (build, train, download datasets)
+- `download_datasets.sh`: dataset preparation automation
+- `setup_dataset_env.sh`: host Python environment for datasets
+- `launch-aws-ec2.sh`: launch EC2 instance from local machine (macOS/Linux)
+- `setup-lambda-labs.sh`: setup script for RunPod/Vast.ai/Lambda Labs (runs on cloud VM)
+- `setup-aws-ec2.sh`: setup script for AWS EC2 (runs on EC2 instance)
+- `choose-platform.sh`: interactive cloud platform selector
 
 ### C) Cloud-first recommendation
 
