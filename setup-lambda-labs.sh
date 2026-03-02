@@ -58,7 +58,7 @@ setup_direct_runtime() {
     print_status "Installing Python dependencies into 'live' environment..."
     micromamba install -y -n live -c conda-forge numpy scikit-image "cmake>=3.15" ffmpeg
     micromamba run -n live pip install --upgrade pip
-    micromamba run -n live pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+    micromamba run -n live pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
     micromamba run -n live pip install svgwrite svgpathtools cssutils numba torch-tools scikit-fmm easydict visdom tensorboard "timm==0.6.13" lpips tqdm matplotlib "opencv-python==4.5.4.60"
 
     print_status "Building DiffVG Python bindings in direct runtime..."
