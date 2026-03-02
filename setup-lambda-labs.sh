@@ -32,6 +32,14 @@ print_error() {
     echo -e "${RED}[✗]${NC} $1"
 }
 
+has_systemd() {
+    [ -d /run/systemd/system ] && command -v systemctl &> /dev/null
+}
+
+in_container() {
+    [ -f /.dockerenv ] || grep -qaE 'docker|containerd|kubepods' /proc/1/cgroup 2>/dev/null
+}
+
 # 1. System Update
 print_status "Updating system packages..."
 sudo apt-get update
@@ -74,36 +82,55 @@ else
     print_status "Docker already installed"
 fi
 
-# 5. Install NVIDIA Container Toolkit
-print_status "Installing NVIDIA Container Toolkit..."
-distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-curl -s -L https://nvidia.github.io/libnvidia-container/gpgkey | sudo apt-key add -
-curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+# 5. Install NVIDIA Container Toolkit (VM only)
+if has_systemd; then
+    print_status "Installing NVIDIA Container Toolkit..."
+    distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+    curl -s -L https://nvidia.github.io/libnvidia-container/gpgkey | sudo apt-key add -
+    curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit nvidia-docker2
-sudo systemctl restart docker
+    sudo apt-get update
+    sudo apt-get install -y nvidia-container-toolkit nvidia-docker2
+    sudo systemctl restart docker
 
-# Verify GPU access in Docker
-print_status "Verifying Docker GPU access..."
-docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
+    # Verify GPU access in Docker
+    print_status "Verifying Docker GPU access..."
+    docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
+else
+    print_warning "No systemd detected (container environment). Skipping NVIDIA Container Toolkit install/restart."
+    if in_container; then
+        print_warning "RunPod container mode detected. Host already manages NVIDIA runtime."
+    fi
+    if docker info &>/dev/null; then
+        print_status "Docker daemon is reachable"
+    else
+        print_warning "Docker daemon not reachable from this container."
+        print_warning "Use a RunPod template with Docker access, or run training directly without nested Docker."
+    fi
+fi
 
 # 6. Clone SuperSVG repository (if not already present)
-REPO_DIR="$HOME/SuperSVG"
+REPO_URL="${SUPERSVG_REPO_URL:-https://github.com/sjtuplayer/SuperSVG.git}"
+REPO_DIR="${SUPERSVG_REPO_DIR:-$HOME/SuperSVG}"
 if [ ! -d "$REPO_DIR" ]; then
     print_status "Cloning SuperSVG repository..."
     cd $HOME
-    git clone https://github.com/sjtuplayer/SuperSVG.git
-    cd SuperSVG
+    git clone "$REPO_URL" "$REPO_DIR"
+    cd "$REPO_DIR"
 else
     print_status "SuperSVG repository already exists at $REPO_DIR"
     cd $REPO_DIR
 fi
 
 # 7. Build Docker image
-print_status "Building SuperSVG Docker image (this may take 10-15 minutes)..."
-docker build -f Dockerfile.mamba -t supersvg:latest .
+if docker info &>/dev/null; then
+    print_status "Building SuperSVG Docker image (this may take 10-15 minutes)..."
+    docker build -f Dockerfile.mamba -t supersvg:latest .
+else
+    print_warning "Skipping Docker image build because Docker daemon is unavailable in this environment."
+    print_warning "If needed, switch to a RunPod pod with Docker daemon access."
+fi
 
 # 8. Create data and output directories
 print_status "Creating data and output directories..."
@@ -123,6 +150,8 @@ cat > $HOME/train_supersvg.sh << 'EOF'
 #!/bin/bash
 # SuperSVG Training Launcher for Lambda Labs
 
+set -e
+
 # Configuration
 DATA_PATH="${DATA_PATH:-$HOME/supersvg_data}"
 OUTPUT_PATH="${OUTPUT_PATH:-$HOME/supersvg_output}"
@@ -130,6 +159,7 @@ CHECKPOINT_PATH="${CHECKPOINT_PATH:-$HOME/supersvg_checkpoints}"
 LOG_PATH="${LOG_PATH:-$HOME/supersvg_logs}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
 EPOCHS="${EPOCHS:-100}"
+REPO_PATH="${REPO_PATH:-$HOME/SuperSVG}"
 
 echo "Starting SuperSVG Training..."
 echo "Data: $DATA_PATH"
@@ -138,18 +168,36 @@ echo "Batch Size: $BATCH_SIZE"
 echo "Epochs: $EPOCHS"
 echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
 
-docker run --rm -it --gpus all \
-  --name supersvg-training \
-  -v $DATA_PATH:/data \
-  -v $OUTPUT_PATH:/workspace/output_coarse \
-  -v $CHECKPOINT_PATH:/workspace/checkpoints \
-  -v $LOG_PATH:/workspace/logs \
-  --shm-size=16g \
-  supersvg:latest \
-  micromamba run -n live python main_coarse.py \
-    --data_path=/data \
-    --batch_size=$BATCH_SIZE \
-    --epochs=$EPOCHS
+if command -v docker &>/dev/null && docker info &>/dev/null && docker image inspect supersvg:latest &>/dev/null; then
+    echo "Mode: Docker"
+    docker run --rm -it --gpus all \
+        --name supersvg-training \
+        -v $DATA_PATH:/data \
+        -v $OUTPUT_PATH:/workspace/output_coarse \
+        -v $CHECKPOINT_PATH:/workspace/checkpoints \
+        -v $LOG_PATH:/workspace/logs \
+        --shm-size=16g \
+        supersvg:latest \
+        micromamba run -n live python main_coarse.py \
+            --data_path=/data \
+            --batch_size=$BATCH_SIZE \
+            --epochs=$EPOCHS
+else
+    echo "Mode: direct host/container execution (Docker daemon/image unavailable)"
+    mkdir -p "$OUTPUT_PATH" "$CHECKPOINT_PATH" "$LOG_PATH"
+    cd "$REPO_PATH"
+
+    if command -v micromamba &>/dev/null; then
+        micromamba run -n live python main_coarse.py \
+            --data_path="$DATA_PATH" \
+            --batch_size="$BATCH_SIZE" \
+            --epochs="$EPOCHS"
+    else
+        echo "Error: micromamba not found for fallback mode."
+        echo "Either use a Docker-enabled pod/template or install micromamba env 'live'."
+        exit 1
+    fi
+fi
 EOF
 
 chmod +x $HOME/train_supersvg.sh
@@ -160,6 +208,8 @@ cat > $HOME/monitor_training.sh << 'EOF'
 #!/bin/bash
 # SuperSVG Training Monitor
 
+set -e
+
 echo "=== SuperSVG Training Monitor ==="
 echo ""
 
@@ -168,12 +218,16 @@ echo "GPU Status:"
 nvidia-smi --query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu --format=csv
 
 echo ""
-echo "Docker Containers:"
-docker ps -a
+if command -v docker &>/dev/null && docker info &>/dev/null; then
+    echo "Docker Containers:"
+    docker ps -a
 
-echo ""
-echo "Recent logs (last 20 lines):"
-docker logs supersvg-training 2>&1 | tail -n 20
+    echo ""
+    echo "Recent logs (last 20 lines):"
+    docker logs supersvg-training 2>&1 | tail -n 20
+else
+    echo "Docker daemon not available in this environment (container-mode fallback)."
+fi
 
 echo ""
 echo "Disk usage:"
@@ -181,16 +235,20 @@ df -h $HOME/supersvg_output $HOME/supersvg_checkpoints
 
 echo ""
 echo "Estimated cost (Lambda Labs A6000 @ $0.80/hour):"
-UPTIME=$(docker inspect --format='{{.State.StartedAt}}' supersvg-training 2>/dev/null)
-if [ ! -z "$UPTIME" ]; then
-    START=$(date -d "$UPTIME" +%s)
-    NOW=$(date +%s)
-    HOURS=$(echo "scale=2; ($NOW - $START) / 3600" | bc)
-    COST=$(echo "scale=2; $HOURS * 0.80" | bc)
-    echo "Running time: $HOURS hours"
-    echo "Estimated cost: \$$COST USD"
+if command -v docker &>/dev/null && docker info &>/dev/null; then
+    UPTIME=$(docker inspect --format='{{.State.StartedAt}}' supersvg-training 2>/dev/null || true)
+    if [ ! -z "$UPTIME" ]; then
+        START=$(date -d "$UPTIME" +%s)
+        NOW=$(date +%s)
+        HOURS=$(echo "scale=2; ($NOW - $START) / 3600" | bc)
+        COST=$(echo "scale=2; $HOURS * 0.80" | bc)
+        echo "Running time: $HOURS hours"
+        echo "Estimated cost: \$$COST USD"
+    else
+        echo "Container not running"
+    fi
 else
-    echo "Container not running"
+    echo "N/A in fallback mode (no Docker container runtime)."
 fi
 EOF
 

@@ -508,6 +508,12 @@ cd SuperSVG
 ./setup-lambda-labs.sh
 ```
 
+If your repo URL is different, set it explicitly:
+
+```bash
+SUPERSVG_REPO_URL=git@github.com:ifthenelse/SuperSVG.git ./setup-lambda-labs.sh
+```
+
 The `setup-lambda-labs.sh` script automates:
 
 - system packages
@@ -515,6 +521,36 @@ The `setup-lambda-labs.sh` script automates:
 - Docker setup
 - image build
 - launcher scripts (`~/train_supersvg.sh`, `~/monitor_training.sh`)
+
+`~/train_supersvg.sh` now auto-detects runtime mode:
+
+- Uses Docker when Docker daemon + `supersvg:latest` are available
+- Falls back to direct `micromamba run -n live ...` execution when Docker daemon is unavailable (common in RunPod container-mode shells)
+
+### RunPod container-mode note (important)
+
+Some RunPod templates open an SSH shell **inside a container** (you may see prompt like `root@<container-id>`). In this mode, `systemd` is unavailable, so commands like `systemctl restart docker` fail with:
+
+```text
+System has not been booted with systemd as init system (PID 1). Can't operate.
+```
+
+This is expected in container mode. Use the updated script in this repo, which skips systemd-only steps automatically.
+
+Quick checks:
+
+```bash
+# 1) confirm template mode
+hostname
+
+# 2) verify docker daemon availability
+docker info
+
+# 3) if docker is reachable, continue with standard flow
+./setup-lambda-labs.sh
+```
+
+If `docker info` fails, your current RunPod template does not expose Docker daemon access to the shell container. In that case, recreate the pod with a template that supports Docker daemon access for build/run workflows.
 
 ## 8.2 AWS EC2 flow
 
