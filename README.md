@@ -527,6 +527,8 @@ The `setup-lambda-labs.sh` script automates:
 - Uses Docker when Docker daemon + `supersvg:latest` are available
 - Falls back to direct `micromamba run -n live ...` execution when Docker daemon is unavailable (common in RunPod container-mode shells)
 
+In fallback mode, `setup-lambda-labs.sh` now bootstraps `micromamba`, creates env `live`, installs dependencies, and builds DiffVG bindings automatically.
+
 ### RunPod container-mode note (important)
 
 Some RunPod templates open an SSH shell **inside a container** (you may see prompt like `root@<container-id>`). In this mode, `systemd` is unavailable, so commands like `systemctl restart docker` fail with:

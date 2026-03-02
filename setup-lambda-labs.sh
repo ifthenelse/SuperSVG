@@ -32,6 +32,44 @@ print_error() {
     echo -e "${RED}[✗]${NC} $1"
 }
 
+setup_direct_runtime() {
+    print_status "Preparing direct runtime (no Docker daemon)..."
+
+    export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$HOME/micromamba}"
+
+    if ! command -v micromamba &> /dev/null; then
+        print_status "Installing micromamba..."
+        local tmp_dir
+        tmp_dir=$(mktemp -d)
+        curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$tmp_dir" bin/micromamba
+        mkdir -p "$HOME/.local/bin"
+        mv "$tmp_dir/bin/micromamba" "$HOME/.local/bin/micromamba"
+        chmod +x "$HOME/.local/bin/micromamba"
+        rm -rf "$tmp_dir"
+    fi
+
+    export PATH="$HOME/.local/bin:$PATH"
+
+    if ! micromamba env list | awk '{print $1}' | grep -qx "live"; then
+        print_status "Creating micromamba environment 'live'..."
+        micromamba create -y -n live -c conda-forge python=3.7
+    fi
+
+    print_status "Installing Python dependencies into 'live' environment..."
+    micromamba install -y -n live -c conda-forge numpy scikit-image "cmake>=3.15" ffmpeg
+    micromamba run -n live pip install --upgrade pip
+    micromamba run -n live pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+    micromamba run -n live pip install svgwrite svgpathtools cssutils numba torch-tools scikit-fmm easydict visdom "opencv-python==4.5.4.60"
+
+    print_status "Building DiffVG Python bindings in direct runtime..."
+    git config --global --add safe.directory "$REPO_DIR" || true
+    cd "$REPO_DIR/DiffVG"
+    git submodule update --init --recursive
+    find . -name "CMakeLists.txt" -exec sed -i 's/cmake_minimum_required([^)]*)/cmake_minimum_required(VERSION 3.5)/g' {} +
+    micromamba run -n live python setup.py install
+    cd "$REPO_DIR"
+}
+
 has_systemd() {
     [ -d /run/systemd/system ] && command -v systemctl &> /dev/null
 }
@@ -83,6 +121,7 @@ else
 fi
 
 # 5. Install NVIDIA Container Toolkit (VM only)
+DOCKER_READY=false
 if has_systemd; then
     print_status "Installing NVIDIA Container Toolkit..."
     distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
@@ -97,6 +136,7 @@ if has_systemd; then
     # Verify GPU access in Docker
     print_status "Verifying Docker GPU access..."
     docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
+    DOCKER_READY=true
 else
     print_warning "No systemd detected (container environment). Skipping NVIDIA Container Toolkit install/restart."
     if in_container; then
@@ -104,9 +144,10 @@ else
     fi
     if docker info &>/dev/null; then
         print_status "Docker daemon is reachable"
+        DOCKER_READY=true
     else
         print_warning "Docker daemon not reachable from this container."
-        print_warning "Use a RunPod template with Docker access, or run training directly without nested Docker."
+        print_warning "Will switch to direct runtime bootstrap (micromamba + live env)."
     fi
 fi
 
@@ -124,12 +165,12 @@ else
 fi
 
 # 7. Build Docker image
-if docker info &>/dev/null; then
+if [ "$DOCKER_READY" = true ] && docker info &>/dev/null; then
     print_status "Building SuperSVG Docker image (this may take 10-15 minutes)..."
     docker build -f Dockerfile.mamba -t supersvg:latest .
 else
     print_warning "Skipping Docker image build because Docker daemon is unavailable in this environment."
-    print_warning "If needed, switch to a RunPod pod with Docker daemon access."
+    setup_direct_runtime
 fi
 
 # 8. Create data and output directories
