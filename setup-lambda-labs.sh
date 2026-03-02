@@ -228,8 +228,14 @@ else
     mkdir -p "$OUTPUT_PATH" "$CHECKPOINT_PATH" "$LOG_PATH"
     cd "$REPO_PATH"
 
-    if command -v micromamba &>/dev/null; then
-        micromamba run -n live python main_coarse.py \
+    export PATH="$HOME/.local/bin:$PATH"
+    MAMBA_BIN="$(command -v micromamba || true)"
+    if [ -z "$MAMBA_BIN" ] && [ -x "$HOME/.local/bin/micromamba" ]; then
+        MAMBA_BIN="$HOME/.local/bin/micromamba"
+    fi
+
+    if [ -n "$MAMBA_BIN" ]; then
+        "$MAMBA_BIN" run -n live python main_coarse.py \
             --data_path="$DATA_PATH" \
             --batch_size="$BATCH_SIZE" \
             --epochs="$EPOCHS"
