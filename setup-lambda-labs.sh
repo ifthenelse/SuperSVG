@@ -58,7 +58,19 @@ setup_direct_runtime() {
     print_status "Installing Python dependencies into 'live' environment..."
     micromamba install -y -n live -c conda-forge numpy scikit-image "cmake>=3.15" ffmpeg
     micromamba run -n live pip install --upgrade pip
-    micromamba run -n live pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+    PY_VER=$(micromamba run -n live python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    if [ "$PY_VER" = "3.7" ]; then
+        print_warning "Python 3.7 detected. Installing CUDA PyTorch 1.13.1 wheels (cu117-compatible)."
+        micromamba run -n live pip install \
+            torch==1.13.1+cu117 \
+            torchvision==0.14.1+cu117 \
+            --extra-index-url https://download.pytorch.org/whl/cu117
+    else
+        print_status "Installing CUDA PyTorch wheels (cu121)..."
+        micromamba run -n live pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+    fi
+
     micromamba run -n live pip install svgwrite svgpathtools cssutils numba torch-tools scikit-fmm easydict visdom tensorboard "timm==0.6.13" lpips tqdm matplotlib "opencv-python==4.5.4.60"
 
     print_status "Building DiffVG Python bindings in direct runtime..."
