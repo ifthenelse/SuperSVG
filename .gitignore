@@ -210,8 +210,11 @@ wandb/
 data/
 dataset/
 datasets/
+input/
 ImageNet/
 imagenet/
+${DATA_DIR}/
+.venv-datasets/
 
 # Generated SVG files
 *.svg
