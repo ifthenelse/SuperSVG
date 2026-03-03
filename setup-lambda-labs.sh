@@ -206,13 +206,27 @@ cat > $HOME/train_supersvg.sh << 'EOF'
 set -e
 
 # Configuration
-DATA_PATH="${DATA_PATH:-$HOME/supersvg_data}"
+REPO_PATH="${REPO_PATH:-$HOME/SuperSVG}"
+DATA_PATH="${DATA_PATH:-$REPO_PATH/input}"
 OUTPUT_PATH="${OUTPUT_PATH:-$HOME/supersvg_output}"
 CHECKPOINT_PATH="${CHECKPOINT_PATH:-$HOME/supersvg_checkpoints}"
 LOG_PATH="${LOG_PATH:-$HOME/supersvg_logs}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
 EPOCHS="${EPOCHS:-100}"
-REPO_PATH="${REPO_PATH:-$HOME/SuperSVG}"
+
+if [ ! -d "$DATA_PATH" ]; then
+    echo "Error: dataset path does not exist: $DATA_PATH"
+    echo "Create a test dataset with: cd $REPO_PATH && ./download_datasets.sh test"
+    exit 1
+fi
+
+IMAGE_COUNT=$(find "$DATA_PATH" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l | tr -d ' ')
+if [ "${IMAGE_COUNT:-0}" -eq 0 ]; then
+    echo "Error: no images found under dataset path: $DATA_PATH"
+    echo "Create a test dataset with: cd $REPO_PATH && ./download_datasets.sh test"
+    echo "Or set DATA_PATH explicitly, e.g. DATA_PATH=$HOME/supersvg_data /root/train_supersvg.sh"
+    exit 1
+fi
 
 echo "Starting SuperSVG Training..."
 echo "Data: $DATA_PATH"
