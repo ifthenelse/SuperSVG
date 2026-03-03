@@ -527,7 +527,7 @@ The `setup-lambda-labs.sh` script automates:
 - Uses Docker when Docker daemon + `supersvg:latest` are available
 - Falls back to direct `micromamba run -n live ...` execution when Docker daemon is unavailable (common in RunPod container-mode shells)
 
-By default, `~/train_supersvg.sh` uses dataset path `~/SuperSVG/input` (override with `DATA_PATH=...`).
+By default, `~/train_supersvg.sh` uses dataset path `~/SuperSVG/input/test` (override with `DATA_PATH=...`).
 The launcher now validates that the dataset directory exists and contains images before starting training.
 
 In fallback mode, `setup-lambda-labs.sh` now bootstraps `micromamba`, creates env `live`, installs dependencies, and builds DiffVG bindings automatically.
