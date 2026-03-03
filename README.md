@@ -529,6 +529,8 @@ The `setup-lambda-labs.sh` script automates:
 
 By default, `~/train_supersvg.sh` uses dataset path `~/SuperSVG/input/test` (override with `DATA_PATH=...`).
 The launcher now validates that the dataset directory exists and contains images before starting training.
+When `/workspace` is available (RunPod Network Volume mount), the launcher writes outputs/logs/checkpoints to `/workspace/supersvg` by default so artifacts persist across pod restarts.
+You can override persistence paths with `PERSIST_ROOT=...`, `OUTPUT_PATH=...`, and `LOG_PATH=...`.
 
 **Important:** The test dataset has only 5 images, so the default batch size is 4. For larger datasets, override with `BATCH_SIZE=32` or higher.
 

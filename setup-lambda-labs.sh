@@ -205,12 +205,19 @@ cat > $HOME/train_supersvg.sh << 'EOF'
 
 set -e
 
+if [ -d "/workspace" ] && [ -w "/workspace" ]; then
+    PERSIST_ROOT_DEFAULT="/workspace/supersvg"
+else
+    PERSIST_ROOT_DEFAULT="$HOME/supersvg_persistent"
+fi
+
 # Configuration
 REPO_PATH="${REPO_PATH:-$HOME/SuperSVG}"
 DATA_PATH="${DATA_PATH:-$REPO_PATH/input/test}"
-OUTPUT_PATH="${OUTPUT_PATH:-$HOME/supersvg_output}"
-CHECKPOINT_PATH="${CHECKPOINT_PATH:-$HOME/supersvg_checkpoints}"
-LOG_PATH="${LOG_PATH:-$HOME/supersvg_logs}"
+PERSIST_ROOT="${PERSIST_ROOT:-$PERSIST_ROOT_DEFAULT}"
+OUTPUT_PATH="${OUTPUT_PATH:-$PERSIST_ROOT/output_coarse}"
+CHECKPOINT_PATH="${CHECKPOINT_PATH:-$PERSIST_ROOT/checkpoints}"
+LOG_PATH="${LOG_PATH:-$PERSIST_ROOT/logs}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
 EPOCHS="${EPOCHS:-100}"
 
@@ -230,7 +237,9 @@ fi
 
 echo "Starting SuperSVG Training..."
 echo "Data: $DATA_PATH"
+echo "Persistent Root: $PERSIST_ROOT"
 echo "Output: $OUTPUT_PATH"
+echo "Logs: $LOG_PATH"
 echo "Batch Size: $BATCH_SIZE"
 echo "Epochs: $EPOCHS"
 echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader)"
@@ -247,6 +256,8 @@ if command -v docker &>/dev/null && docker info &>/dev/null && docker image insp
         supersvg:latest \
         micromamba run -n live python main_coarse.py \
             --data_path=/data \
+            --output_dir=/workspace/output_coarse \
+            --log_dir=/workspace/logs \
             --batch_size=$BATCH_SIZE \
             --epochs=$EPOCHS
 else
@@ -263,6 +274,8 @@ else
     if [ -n "$MAMBA_BIN" ]; then
         "$MAMBA_BIN" run -n live python main_coarse.py \
             --data_path="$DATA_PATH" \
+            --output_dir="$OUTPUT_PATH" \
+            --log_dir="$LOG_PATH" \
             --batch_size="$BATCH_SIZE" \
             --epochs="$EPOCHS"
     else
