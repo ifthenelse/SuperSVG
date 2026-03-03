@@ -211,7 +211,7 @@ DATA_PATH="${DATA_PATH:-$REPO_PATH/input/test}"
 OUTPUT_PATH="${OUTPUT_PATH:-$HOME/supersvg_output}"
 CHECKPOINT_PATH="${CHECKPOINT_PATH:-$HOME/supersvg_checkpoints}"
 LOG_PATH="${LOG_PATH:-$HOME/supersvg_logs}"
-BATCH_SIZE="${BATCH_SIZE:-32}"
+BATCH_SIZE="${BATCH_SIZE:-4}"
 EPOCHS="${EPOCHS:-100}"
 
 if [ ! -d "$DATA_PATH" ]; then
